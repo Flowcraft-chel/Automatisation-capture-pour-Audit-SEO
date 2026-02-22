@@ -1,0 +1,310 @@
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { initDb } from './db.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { v4 as uuidv4 } from 'uuid';
+import { captureSession } from './sessions.js';
+import { createAirtableAudit, updateAirtableStatut } from './airtable.js';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import { auditQueue } from './jobs/queue.js';
+import { initWorker } from './jobs/worker.js';
+import { initAirtablePoller } from './jobs/airtablePoller.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.resolve(__dirname, '..', 'dist');
+
+import cookieParser from 'cookie-parser';
+
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+    cors: {
+        origin: 'http://localhost:5173',
+        credentials: true
+    }
+});
+
+const PORT = process.env.PORT || 5000;
+const SECRET_KEY = process.env.JWT_SECRET || 'votre_cle_secrete_super_secure';
+
+app.use(cors({
+    origin: 'http://localhost:5173', // Vite default
+    credentials: true
+}));
+app.use(express.json());
+app.use(cookieParser());
+
+// Simple memory-based lockout (Redis for production)
+const loginAttempts = new Map();
+
+// Log requests
+app.use((req, res, next) => {
+    console.log(`${req.method} ${req.url}`);
+    next();
+});
+
+// Serve static files from the React app dist folder
+app.use(express.static(distPath));
+
+// Auth Middleware
+const authenticateToken = (req, res, next) => {
+    const token = req.cookies.token;
+    if (!token) return res.sendStatus(401);
+
+    jwt.verify(token, SECRET_KEY, (err, user) => {
+        if (err) return res.sendStatus(403);
+        req.user = user;
+        next();
+    });
+};
+
+let db;
+
+initDb().then(database => {
+    db = database;
+    console.log('Database initialized');
+    // Initialize BullMQ Worker
+    initWorker(io, db);
+    // Initialize Airtable Poller (Background Sync)
+    initAirtablePoller(io, db);
+}).catch(err => {
+    console.error('Failed to initialize database:', err);
+});
+
+// Socket.io Room Logic
+io.on('connection', (socket) => {
+    console.log('Client connected:', socket.id);
+
+    socket.on('join-audit', (auditId) => {
+        socket.join(`audit:${auditId}`);
+        console.log(`Client ${socket.id} joined audit room: ${auditId}`);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Client disconnected:', socket.id);
+    });
+});
+
+// Health Check
+app.get('/api/health', async (req, res) => {
+    try {
+        const dbStatus = db ? 'OK' : 'LOCKED';
+        const redisStatus = auditQueue ? 'OK' : 'FAIL';
+        res.json({ status: 'UP', db: dbStatus, redis: redisStatus });
+    } catch (err) {
+        res.status(500).json({ status: 'DOWN', error: err.message });
+    }
+});
+
+// API Routes
+// Register
+app.post('/api/auth/register', async (req, res) => {
+    const { email, password } = req.body;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+    const id = uuidv4();
+    const hashedPassword = await bcrypt.hash(password, 12); // Cost 12 as per instructions
+
+    try {
+        await db.run('INSERT INTO users (id, email, password) VALUES (?, ?, ?)', [id, email, hashedPassword]);
+        res.status(201).json({ message: 'Compte créé avec succès' });
+    } catch (error) {
+        const msg = error.message && error.message.includes('UNIQUE') ? 'Email déjà utilisé' : 'Erreur serveur';
+        res.status(400).json({ error: msg });
+    }
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = req.body;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    // Check lockout
+    const attempts = loginAttempts.get(email) || { count: 0, last: 0 };
+    if (attempts.count >= 5 && Date.now() - attempts.last < 15 * 60 * 1000) {
+        return res.status(429).json({ error: 'Trop de tentatives. Réessayez dans 15 minutes.' });
+    }
+
+    try {
+        const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+        if (user && await bcrypt.compare(password, user.password)) {
+            // Success: Reset attempts
+            loginAttempts.delete(email);
+
+            const token = jwt.sign({ userId: user.id }, SECRET_KEY, { expiresIn: '24h' });
+
+            res.cookie('token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 24 * 60 * 60 * 1000
+            });
+
+            res.json({ user: { email: user.email, id: user.id } });
+        } else {
+            // Fail: Increment attempts
+            attempts.count += 1;
+            attempts.last = Date.now();
+            loginAttempts.set(email, attempts);
+            res.status(401).json({ error: 'Email ou mot de passe incorrect' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+    res.clearCookie('token');
+    res.json({ message: 'Déconnecté' });
+});
+
+// Check Auth Status (for frontend refresh)
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+    const user = await db.get('SELECT id, email FROM users WHERE id = ?', [req.user.userId]);
+    res.json(user);
+});
+
+// Session Capture
+app.post('/api/sessions/connect/:service', authenticateToken, async (req, res) => {
+    const { service } = req.params;
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    try {
+        console.log(`[AUTH] User ${userId} attempting to connect ${service}...`);
+        const sessionData = await captureSession(service, userId);
+        console.log(`[SESSION] Finalisation pour ${service}...`);
+        const sessionId = uuidv4();
+
+        // Enforce update if exists (Upsert manual for SQLite compatibility)
+        await db.run('DELETE FROM user_sessions WHERE user_id = ? AND service = ?', [userId, service]);
+        await db.run(
+            'INSERT INTO user_sessions (id, user_id, service, encrypted_cookies) VALUES (?, ?, ?, ?)',
+            [sessionId, userId, service, sessionData.encryptedCookies]
+        );
+
+        res.json({ message: `Service ${service} connecté avec succès` });
+    } catch (err) {
+        console.error('SERVER ERROR (session):', err);
+        res.status(500).json({ error: err.message || 'Erreur lors de la capture de session' });
+    }
+});
+
+
+// Create Audit
+app.post('/api/audits', authenticateToken, async (req, res) => {
+    const { siteName, siteUrl, auditSheetUrl, actionPlanSheetUrl, mrmReportUrl } = req.body;
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    try {
+        // 1. Create Airtable Record
+        const airtableId = await createAirtableAudit(req.body);
+
+        // 2. Create Audit in DB
+        const auditId = uuidv4();
+        await db.run(
+            'INSERT INTO audits (id, user_id, nom_site, url_site, sheet_audit_url, sheet_plan_url, mrm_report_url, airtable_record_id, statut_global) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [auditId, userId, siteName, siteUrl, auditSheetUrl, actionPlanSheetUrl, mrmReportUrl, airtableId, 'EN_COURS']
+        );
+
+        // 3. Initialize Steps
+        const steps = [
+            'robots_txt', 'sitemap', 'logo', 'psi_mobile', 'psi_desktop',
+            'ami_responsive', 'ssl_labs', 'semrush', 'ahrefs', 'ubersuggest',
+            'sheets_audit', 'sheets_plan', 'gsc', 'mrm'
+        ];
+
+        for (const stepKey of steps) {
+            await db.run(
+                'INSERT INTO audit_steps (id, audit_id, step_key, statut) VALUES (?, ?, ?, ?)',
+                [uuidv4(), auditId, stepKey, 'EN_ATTENTE']
+            );
+        }
+
+        // 4. Update Airtable to "En cours" (Non-blocking)
+        try {
+            await updateAirtableStatut(airtableId, 'En cours');
+        } catch (e) {
+            console.error('[AIRTABLE] Failed to update status to "En cours":', e.message);
+        }
+
+        // 5. Add to BullMQ queue
+        await auditQueue.add(`audit-${auditId}`, { auditId, userId });
+
+        // 6. Notify clients via Socket.io
+        io.emit('audit:created', { id: auditId, user_id: userId, nom_site: siteName, url_site: siteUrl, statut_global: 'EN_COURS', created_at: new Date().toISOString() });
+
+        res.status(201).json({ auditId, message: 'Audit lancé avec succès' });
+    } catch (err) {
+        console.error('SERVER ERROR (audit):', err);
+        res.status(500).json({ error: 'Erreur lors de la création de l\'audit: ' + err.message });
+    }
+});
+
+// Get Audit List
+app.get('/api/audits', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    try {
+        const audits = await db.all('SELECT * FROM audits WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+        res.json(audits);
+    } catch (err) {
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Get Audit Details (with steps)
+app.get('/api/audits/:id', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    const auditId = req.params.id;
+    try {
+        const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+        if (!audit) return res.status(404).json({ error: 'Audit non trouvé' });
+
+        const steps = await db.all('SELECT * FROM audit_steps WHERE audit_id = ?', [auditId]);
+        res.json({ ...audit, steps });
+    } catch (err) {
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Session Status
+app.get('/api/sessions/status', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+    try {
+        console.log(`[AUTH] Fetching session status for user ${userId}`);
+        const sessions = await db.all('SELECT service, created_at FROM user_sessions WHERE user_id = ?', [userId]);
+        console.log(`[AUTH] Found ${sessions.length} sessions`);
+        res.json(sessions);
+    } catch (err) {
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// The "catchall" handler: for any request that doesn't
+// match one above, send back React's index.html file.
+app.use((req, res) => {
+    const indexPath = path.join(distPath, 'index.html');
+    res.sendFile(indexPath, (err) => {
+        if (err) {
+            console.error('Error sending index.html:', err);
+            // If it's an API route that failed, maybe return JSON
+            if (req.url.startsWith('/api')) {
+                res.status(404).json({ error: 'Route non trouvée' });
+            } else {
+                res.status(500).send(err.message);
+            }
+        }
+    });
+});
+
+httpServer.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Serving static files from: ${distPath}`);
+});

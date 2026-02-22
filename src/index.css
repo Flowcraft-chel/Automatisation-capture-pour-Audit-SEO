@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --novek-blue: #1e40af;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100 min-h-screen font-sans;
+}
+
+.glass {
+  @apply bg-white/5 backdrop-blur-lg border border-white/10 shadow-2xl;
+}
+
+.btn-primary {
+  @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-200 active:scale-95 shadow-lg shadow-blue-500/20;
+}

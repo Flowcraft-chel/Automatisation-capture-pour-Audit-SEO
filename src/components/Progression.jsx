@@ -1,0 +1,233 @@
+import React, { useState, useEffect } from 'react';
+import {
+    BarChart3,
+    Hourglass,
+    RefreshCw,
+    CheckCircle2,
+    XCircle,
+    ChevronRight,
+    Clock,
+    ExternalLink,
+    Bot
+} from 'lucide-react';
+import { io } from 'socket.io-client';
+
+const Progression = () => {
+    const [audits, setAudits] = useState([]);
+    const [activeAudit, setActiveAudit] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    const fetchAudits = async () => {
+        try {
+            const response = await fetch('/api/audits', {
+                credentials: 'include'
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setAudits(data);
+                if (data.length > 0 && !activeAudit) {
+                    fetchAuditDetails(data[0].id);
+                }
+            }
+        } catch (err) {
+            console.error('Err audits:', err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchAuditDetails = async (id) => {
+        try {
+            const response = await fetch(`/api/audits/${id}`, {
+                credentials: 'include'
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setActiveAudit(data);
+            }
+        } catch (err) {
+            console.error('Err details:', err);
+        }
+    };
+
+    useEffect(() => {
+        fetchAudits();
+
+        const socket = io('/', {
+            path: '/socket.io',
+            withCredentials: true,
+            transports: ['polling', 'websocket'] // Start with polling, upgrade to ws
+        });
+
+        socket.on('connect', () => {
+            console.log('Socket connecté');
+        });
+
+        socket.on('audit:created', (newAudit) => {
+            setAudits(prev => {
+                const exists = prev.find(a => a.id === newAudit.id);
+                if (exists) return prev;
+                return [newAudit, ...prev];
+            });
+            // Automatically select the new audit if it's the only one or if we're on the page
+            if (!activeAudit) {
+                fetchAuditDetails(newAudit.id);
+            }
+        });
+
+        socket.on('audit:update', (updatedAudit) => {
+            setAudits(prev => prev.map(a => a.id === updatedAudit.id ? updatedAudit : a));
+            if (activeAudit?.id === updatedAudit.id) {
+                setActiveAudit(updatedAudit);
+            }
+        });
+
+        socket.on('step:update', ({ auditId, step }) => {
+            if (activeAudit?.id === auditId) {
+                setActiveAudit(prev => ({
+                    ...prev,
+                    steps: prev.steps.map(s => s.step_key === step.step_key ? { ...s, ...step } : s)
+                }));
+            }
+        });
+
+        return () => socket.disconnect();
+    }, []);
+
+    useEffect(() => {
+        if (activeAudit?.id) {
+            const socket = io('/', { withCredentials: true });
+            socket.emit('join-audit', activeAudit.id);
+            return () => socket.disconnect();
+        }
+    }, [activeAudit?.id]);
+
+    const getStatusIcon = (status) => {
+        const s = status?.toUpperCase();
+        switch (s) {
+            case 'SUCCESS':
+            case 'SUCCES': return <CheckCircle2 className="w-5 h-5 text-green-400" />;
+            case 'ERROR':
+            case 'ERREUR': return <XCircle className="w-5 h-5 text-red-400" />;
+            case 'EN_COURS': return <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />;
+            case 'IA_EN_COURS': return <Bot className="w-5 h-5 text-purple-400 animate-pulse" />;
+            case 'FAIT': return <CheckCircle2 className="w-5 h-5 text-green-400" />;
+            default: return <Hourglass className="w-5 h-5 text-slate-500" />;
+        }
+    };
+
+    const StepItem = ({ step }) => (
+        <div className="flex flex-col p-4 rounded-xl border border-white/5 bg-slate-900/30 hover:bg-slate-900/50 transition-all group gap-2">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-slate-800 border border-white/5 group-hover:border-blue-500/30 transition-all">
+                        {getStatusIcon(step.statut)}
+                    </div>
+                    <div>
+                        <h4 className="font-medium text-sm text-slate-200 capitalize">{step.step_key.replace(/_/g, ' ')}</h4>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest">{step.statut}</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-4">
+                    {step.output_cloudinary_url && (
+                        <a href={step.output_cloudinary_url} target="_blank" rel="noreferrer" className="p-2 hover:bg-blue-500/10 rounded-lg text-blue-400 transition-all">
+                            <ExternalLink className="w-4 h-4" />
+                        </a>
+                    )}
+                </div>
+            </div>
+            {step.resultat && (
+                <div className="mt-1 pl-14">
+                    <p className="text-[11px] text-slate-400 leading-relaxed bg-slate-800/20 p-2 rounded-lg italic">
+                        {step.resultat.replace(/^"|"$/g, '')}
+                    </p>
+                </div>
+            )}
+        </div>
+    );
+
+    if (loading) return <div className="py-20 text-center animate-pulse text-blue-400">Chargement des audits...</div>;
+
+    return (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
+            {/* Sidebar: Audit List */}
+            <div className="lg:col-span-1 space-y-4">
+                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                    <Clock className="w-4 h-4" /> Historique Récent
+                </h3>
+                <div className="space-y-3 max-h-[600px] overflow-auto pr-2">
+                    {audits.map(audit => (
+                        <button
+                            key={audit.id}
+                            onClick={() => fetchAuditDetails(audit.id)}
+                            className={`w-full p-4 rounded-2xl border transition-all text-left group ${activeAudit?.id === audit.id
+                                ? 'bg-blue-600/10 border-blue-500/30 ring-1 ring-blue-500/20'
+                                : 'bg-slate-900/40 border-white/5 hover:border-white/10'
+                                }`}
+                        >
+                            <div className="flex justify-between items-start mb-2">
+                                <span className="font-bold text-white group-hover:text-blue-400 transition-colors truncate max-w-[150px]">
+                                    {audit.nom_site}
+                                </span>
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full ${audit.statut_global === 'TERMINE' ? 'bg-green-500/10 text-green-400' : 'bg-blue-500/10 text-blue-400'
+                                    }`}>
+                                    {audit.statut_global}
+                                </span>
+                            </div>
+                            <p className="text-xs text-slate-500 truncate">{audit.url_site}</p>
+                        </button>
+                    ))}
+                    {audits.length === 0 && <div className="text-slate-600 italic text-sm py-10">Aucun audit trouvé.</div>}
+                </div>
+            </div>
+
+            {/* Main: Active Audit Details */}
+            <div className="lg:col-span-2 space-y-6">
+                {activeAudit ? (
+                    <>
+                        <div className="glass rounded-2xl p-6 border border-white/5">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                                <div>
+                                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                        {activeAudit.nom_site}
+                                        <a href={activeAudit.url_site} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-blue-400 transition-all">
+                                            <ExternalLink className="w-4 h-4" />
+                                        </a>
+                                    </h2>
+                                    <p className="text-sm text-slate-400 italic">Lancé le {new Date(activeAudit.created_at).toLocaleString()}</p>
+                                </div>
+                                <div className="flex gap-4">
+                                    <div className="text-center px-4 py-2 bg-slate-800/50 rounded-xl border border-white/5">
+                                        <p className="text-[10px] text-slate-500 uppercase">Progression</p>
+                                        <p className="text-lg font-bold text-blue-400">
+                                            {(() => {
+                                                const total = activeAudit.steps?.length || 1;
+                                                const completed = activeAudit.steps?.filter(s =>
+                                                    ['SUCCESS', 'SUCCES', 'WARNING', 'FAIT'].includes(s.statut?.toUpperCase())
+                                                ).length || 0;
+                                                return Math.round((completed / total) * 100);
+                                            })()}%
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {activeAudit.steps?.map(step => (
+                                    <StepItem key={step.id} step={step} />
+                                ))}
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                    <div className="glass rounded-2xl p-20 text-center border border-dashed border-white/5">
+                        <BarChart3 className="w-12 h-12 text-slate-700 mx-auto mb-4" />
+                        <p className="text-slate-500">Sélectionnez un audit pour voir sa progression</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default Progression;
