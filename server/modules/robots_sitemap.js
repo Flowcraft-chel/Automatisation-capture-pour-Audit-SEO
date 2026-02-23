@@ -35,10 +35,17 @@ export async function auditRobotsSitemap(url, auditId) {
             // --- STAGE 1: Find Sitemap and Scroll ---
             const sitemapInfo = await page.evaluate(() => {
                 const text = document.body.innerText;
+                console.log(`[EVALUATE] Page text length: ${text.length}`);
                 const lines = text.split('\n');
-                const sitemapIndex = lines.findIndex(line => line.toLowerCase().includes('sitemap:'));
+                console.log(`[EVALUATE] Total lines: ${lines.length}`);
 
-                if (sitemapIndex === -1) return null;
+                const sitemapIndex = lines.findIndex(line => line.toLowerCase().includes('sitemap:'));
+                console.log(`[EVALUATE] Sitemap index found: ${sitemapIndex}`);
+
+                if (sitemapIndex === -1) {
+                    console.log('[EVALUATE] Full text snippet for debugging:', text.substring(0, 500));
+                    return null;
+                }
 
                 return {
                     lineIndex: sitemapIndex,
