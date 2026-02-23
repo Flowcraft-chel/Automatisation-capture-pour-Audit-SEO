@@ -10,7 +10,6 @@ import sharp from 'sharp';
 export async function auditRobotsSitemap(url, auditId) {
     console.log(`[MODULE-ROBOTS] Starting Audit for: ${url}`);
     const browser = await chromium.launch({ headless: true });
-    // Use a standard viewport for natural rendering
     const context = await browser.newContext({
         viewport: { width: 1400, height: 900 }
     });
@@ -22,125 +21,112 @@ export async function auditRobotsSitemap(url, auditId) {
         sitemap: { statut: 'EN_ATTENTE', url: null, capture: null }
     };
 
+    const injectProfessionalCSS = async (p) => {
+        await p.evaluate(() => {
+            const style = document.createElement('style');
+            style.textContent = `
+                body {
+                    background-color: #0d1117 !important;
+                    color: #c9d1d9 !important;
+                    font-family: 'Fira Code', 'Courier New', monospace !important;
+                    padding: 40px !important;
+                    line-height: 1.6 !important;
+                    font-size: 16px !important;
+                    margin: 0 !important;
+                    white-space: pre-wrap !important;
+                    word-wrap: break-word !important;
+                }
+                pre { margin: 0 !important; white-space: pre-wrap !important; }
+            `;
+            document.head.appendChild(style);
+        });
+        await p.waitForTimeout(500);
+    };
+
     try {
+        // --- STAGE 1: robots.txt ---
         console.log(`[MODULE-ROBOTS] Navigating to: ${robotsUrl}`);
-        const response = await page.goto(robotsUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        const robotsResponse = await page.goto(robotsUrl, { waitUntil: 'networkidle', timeout: 30000 });
 
-        if (!response || response.status() >= 400) {
+        if (!robotsResponse || robotsResponse.status() >= 400) {
             robotsResult.robots_txt.statut = 'ERROR';
-            robotsResult.robots_txt.details = `Erreur HTTP: ${response ? response.status() : 'No response'}`;
+            robotsResult.robots_txt.details = `Erreur HTTP: ${robotsResponse ? robotsResponse.status() : 'No response'}`;
         } else {
-            // --- STAGE 0: Professional Styling (Inject CSS) ---
-            await page.evaluate(() => {
-                const style = document.createElement('style');
-                style.textContent = `
-                    body {
-                        background-color: #0d1117 !important;
-                        color: #c9d1d9 !important;
-                        font-family: 'Fira Code', 'Courier New', monospace !important;
-                        padding: 40px !important;
-                        line-height: 1.6 !important;
-                        font-size: 16px !important;
-                        margin: 0 !important;
-                        white-space: pre-wrap !important;
-                        word-wrap: break-word !important;
-                    }
-                    pre { margin: 0 !important; white-space: pre-wrap !important; }
-                `;
-                document.head.appendChild(style);
-            });
-            await page.waitForTimeout(500);
-
+            await injectProfessionalCSS(page);
             robotsResult.robots_txt.statut = 'SUCCESS';
 
-            // --- STAGE 1: Extract Text and Locate Sitemap ---
             const sitemapInfo = await page.evaluate(() => {
-                // Use textContent for "Pure" extraction, fallback to innerText
                 const text = document.body.textContent || document.body.innerText || "";
                 const lines = text.split('\n');
-
-                // Search for "Sitemap:" (case-insensitive)
-                const sitemapIndex = lines.findIndex(line => line.toLowerCase().includes('sitemap:'));
-
-                if (sitemapIndex === -1) return null;
-
-                return {
-                    lineIndex: sitemapIndex,
-                    text: lines[sitemapIndex].trim(),
-                    totalLines: lines.length
-                };
+                const index = lines.findIndex(l => l.toLowerCase().includes('sitemap:'));
+                return index !== -1 ? { lineIndex: index, text: lines[index].trim() } : null;
             });
 
             if (sitemapInfo) {
-                console.log(`[MODULE-ROBOTS] Sitemap discovered at line ${sitemapInfo.lineIndex}: ${sitemapInfo.text}`);
                 const sitemapMatch = sitemapInfo.text.match(/sitemaps?:\s*(https?:\/\/\S+)/i);
                 if (sitemapMatch) {
                     robotsResult.sitemap.url = sitemapMatch[1];
-                    robotsResult.sitemap.statut = 'SUCCESS';
+                    robotsResult.sitemap.statut = 'EN_COURS';
                 }
-
-                // Precision Scroll: Center the sitemap line in the viewport
-                await page.evaluate((index) => {
-                    const estimatedLineHeight = 26; // Based on 16px font + 1.6 line-height
-                    const offsetToPadding = 40;
-                    const scrollTop = (index * estimatedLineHeight) + offsetToPadding - (window.innerHeight / 2.5);
+                await page.evaluate((idx) => {
+                    const scrollTop = (idx * 26) + 40 - (window.innerHeight / 2.5);
                     window.scrollTo(0, Math.max(0, scrollTop));
                 }, sitemapInfo.lineIndex);
-                await page.waitForTimeout(800);
-            } else {
-                console.log('[MODULE-ROBOTS] No sitemap link found. Defaulting to top capture.');
-                robotsResult.sitemap.statut = 'ERROR';
-                robotsResult.sitemap.details = 'Non présent dans robots.txt';
-                await page.evaluate(() => window.scrollTo(0, 0));
+                await page.waitForTimeout(500);
             }
 
-            // --- STAGE 2: Viewport Capture ---
-            const viewportBuffer = await page.screenshot({ fullPage: false });
-            const rawUrl = await uploadBufferToCloudinary(viewportBuffer, `robots-v3-raw-${auditId}.png`, 'audit-temp');
+            const robotsViewportBuffer = await page.screenshot({ fullPage: false });
+            const robotsRawUrl = await uploadBufferToCloudinary(robotsViewportBuffer, `robots-raw-${auditId}.png`, 'audit-temp');
 
-            // --- STAGE 3: AI-Vision Precision Cropping ---
-            // We ask the AI to "measure" and provide the best dimensions for a professional crop.
-            console.log('[MODULE-ROBOTS] AI Analysis for Precision Cropping...');
-            const prompt = sitemapInfo
-                ? `This is a screenshot of a professional robots.txt rendering (dark mode, monospaced).
-                   Task: Locate the 'Sitemap:' line and provide coordinates for a "Pixel Perfect" crop.
-                   Measurement Advice: Include exactly 4 lines of context ABOVE and 4 lines BELOW the sitemap entry.
-                   Centering: The sitemap line must be vertically centered in the crop.
-                   Dimensions: Return ONLY the coordinates in this exact format: CROP: x=0, y=[top], width=[full_width], height=[total_height]`
-                : `This is a screenshot of the top of a robots.txt file.
-                   Task: Provide coordinates for a professional "Lambda" capture.
-                   Measurement Advice: Capture the top block of rules (about 10-12 lines).
-                   Dimensions: Return ONLY the coordinates in this exact format: CROP: x=0, y=0, width=[full_width], height=[total_height]`;
+            const robotsPrompt = sitemapInfo
+                ? "Locate the 'Sitemap:' line and return CROP: x=0, y=[top], width=[full_width], height=[total_height] with 4 lines context above/below."
+                : "Capture the top block of rules. Return CROP: x=0, y=0, width=[full_width], height=[total_height]";
 
-            const aiResponse = await analyzeImage(rawUrl, prompt);
-            console.log(`[MODULE-ROBOTS] AI Precision Data: ${aiResponse}`);
+            const robotsAiRes = await analyzeImage(robotsRawUrl, robotsPrompt);
+            const rMatch = robotsAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
 
-            const cropMatch = aiResponse.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
-            if (cropMatch) {
-                let [_, x, y, width, height] = cropMatch.map(Number);
-                const metadata = await sharp(viewportBuffer).metadata();
-
-                // Defensive Capping & Normalization based on AI measures
-                x = Math.max(0, Math.min(x, metadata.width - 50));
-                y = Math.max(0, Math.min(y, metadata.height - 50));
-                width = Math.min(width, metadata.width - x);
-                height = Math.min(height, metadata.height - y);
-
-                console.log(`[MODULE-ROBOTS] Applying Perfect Crop: x=${x}, y=${y}, w=${width}, h=${height}`);
-
-                const finalBuffer = await sharp(viewportBuffer)
-                    .extract({ left: x, top: y, width: width, height: height })
-                    .toBuffer();
-
-                const finalUrl = await uploadBufferToCloudinary(finalBuffer, `robots-pixel-perfect-${auditId}.png`, 'audit-captures');
-                robotsResult.robots_txt.capture = finalUrl;
-                robotsResult.sitemap.capture = finalUrl; // Ensure sitemap capture is also populated for Airtable sync
+            if (rMatch) {
+                const [_, rx, ry, rw, rh] = rMatch.map(Number);
+                const robotsFinalBuffer = await sharp(robotsViewportBuffer).extract({ left: rx, top: ry, width: rw, height: rh }).toBuffer();
+                robotsResult.robots_txt.capture = await uploadBufferToCloudinary(robotsFinalBuffer, `robots-final-${auditId}.png`, 'audit-captures');
             } else {
-                console.warn('[MODULE-ROBOTS] AI measurements failed, fallback to raw viewport.');
-                robotsResult.robots_txt.capture = rawUrl;
-                robotsResult.sitemap.capture = rawUrl;
+                robotsResult.robots_txt.capture = robotsRawUrl;
             }
         }
+
+        // --- STAGE 2: Actual Sitemap Page ---
+        if (robotsResult.sitemap.url) {
+            console.log(`[MODULE-ROBOTS] Navigating to Actual Sitemap: ${robotsResult.sitemap.url}`);
+            try {
+                await page.goto(robotsResult.sitemap.url, { waitUntil: 'networkidle', timeout: 30000 });
+                await injectProfessionalCSS(page);
+
+                const sitemapViewportBuffer = await page.screenshot({ fullPage: false });
+                const sitemapRawUrl = await uploadBufferToCloudinary(sitemapViewportBuffer, `sitemap-raw-${auditId}.png`, 'audit-temp');
+
+                const sitemapPrompt = "This is a sitemap XML/HTML page. Provide coordinates for a professional crop of the top entries. Return CROP: x=0, y=0, width=[full_width], height=[total_height] for the first 15-20 lines.";
+                const sitemapAiRes = await analyzeImage(sitemapRawUrl, sitemapPrompt);
+                const sMatch = sitemapAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
+
+                if (sMatch) {
+                    const [_, sx, sy, sw, sh] = sMatch.map(Number);
+                    const sitemapFinalBuffer = await sharp(sitemapViewportBuffer).extract({ left: sx, top: sy, width: sw, height: sh }).toBuffer();
+                    robotsResult.sitemap.capture = await uploadBufferToCloudinary(sitemapFinalBuffer, `sitemap-final-${auditId}.png`, 'audit-captures');
+                    robotsResult.sitemap.statut = 'SUCCESS';
+                } else {
+                    robotsResult.sitemap.capture = sitemapRawUrl;
+                    robotsResult.sitemap.statut = 'SUCCESS';
+                }
+            } catch (sitemapErr) {
+                console.error('[MODULE-ROBOTS] Sitemap navigation error:', sitemapErr);
+                robotsResult.sitemap.statut = 'ERROR';
+                robotsResult.sitemap.details = `Erreur de navigation: ${sitemapErr.message}`;
+            }
+        } else if (robotsResult.sitemap.statut !== 'SUCCESS') {
+            robotsResult.sitemap.statut = 'ERROR';
+            robotsResult.sitemap.details = "Lien non trouvé dans robots.txt";
+        }
+
     } catch (err) {
         console.error('[MODULE-ROBOTS] Global error:', err);
         robotsResult.robots_txt.statut = 'ERROR';
