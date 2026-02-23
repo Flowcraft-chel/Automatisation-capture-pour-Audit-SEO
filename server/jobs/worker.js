@@ -160,6 +160,16 @@ export const initWorker = (io, db) => {
         } catch (err) {
             console.error(`[WORKER] [JOB ${job.id}] Audit ${auditId} failed:`, err);
             await db.run('UPDATE audits SET statut_global = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['ERREUR', auditId]);
+
+            // Sync Error to Airtable
+            if (audit && audit.airtable_record_id) {
+                try {
+                    await updateAirtableStatut(audit.airtable_record_id, 'Erreur');
+                } catch (e) {
+                    console.error('[WORKER] Failed to sync "Erreur" to Airtable:', e.message);
+                }
+            }
+
             const finalAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
             if (finalAudit) {
                 io.to(`audit:${auditId}`).emit('audit:update', finalAudit);

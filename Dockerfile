@@ -6,6 +6,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
+# Install Playwright browsers AND system dependencies (Critical for Railway 500 error)
+RUN npx playwright install --with-deps chromium
+
 # Copy the rest of the application
 COPY . .
 
