@@ -78,10 +78,11 @@ async function syncAirtableToDb(io, db) {
                     });
                 }
 
-                // 2. Re-trigger logic: If "A faire" in Airtable, reset and re-queue
-                if (airtableStatus === 'A faire') {
+                // 2. Re-trigger logic: If "A faire" in Airtable AND local status is terminal (TERMINE or ERREUR)
+                // If local status is EN_ATTENTE or EN_COURS, we skip to avoid duplicates in queue
+                if (airtableStatus === 'A faire' && existing.statut_global !== 'EN_ATTENTE' && existing.statut_global !== 'EN_COURS') {
                     console.log(`[POLLER] Re-triggering audit ${existing.id} from Airtable.`);
-                    await db.run('UPDATE audits SET statut_global = "EN_COURS" WHERE id = ?', [existing.id]);
+                    await db.run('UPDATE audits SET statut_global = "EN_ATTENTE" WHERE id = ?', [existing.id]);
                     await db.run('UPDATE audit_steps SET statut = "EN_ATTENTE" WHERE audit_id = ?', [existing.id]);
 
                     await auditQueue.add(`audit-${existing.id}`, { auditId: existing.id, userId: defaultUser.id }, {
@@ -89,9 +90,7 @@ async function syncAirtableToDb(io, db) {
                         backoff: { type: 'exponential', delay: 5000 }
                     });
 
-                    await table.update(airtableId, { "Statut": "En cours" });
-
-                    io.emit('audit:updated', { id: existing.id, statut_global: 'EN_COURS' });
+                    io.emit('audit:updated', { id: existing.id, statut_global: 'EN_ATTENTE' });
                 }
                 continue;
             }
@@ -112,37 +111,23 @@ async function syncAirtableToDb(io, db) {
                     record.get('Lien Google Sheet plan d\'action'),
                     record.get('Lien du rapport my ranking metrics'),
                     airtableId,
-                    'EN_COURS'
+                    'EN_ATTENTE'
                 ]
             );
 
             // 2. Initialize Steps
-            const steps = [
-                { key: 'robots_txt', label: 'Robots Txt' },
-                { key: 'sitemap', label: 'Sitemap' },
-                { key: 'logo', label: 'Logo' },
-                { key: 'psi_mobile', label: 'Psi Mobile' },
-                { key: 'psi_desktop', label: 'Psi Desktop' },
-                { key: 'ami_responsive', label: 'Ami Responsive' },
-                { key: 'ssl_labs', label: 'Ssl Labs' },
-                { key: 'semrush', label: 'Semrush' },
-                { key: 'ahrefs', label: 'Ahrefs' },
-                { key: 'ubersuggest', label: 'Ubersuggest' },
-                { key: 'sheets_audit', label: 'Sheets Audit' },
-                { key: 'sheets_plan', label: 'Sheets Plan' },
-                { key: 'gsc', label: 'Gsc' },
-                { key: 'mrm', label: 'Mrm' }
+            const stepsKeys = [
+                'robots_txt', 'sitemap', 'logo', 'psi_mobile', 'psi_desktop',
+                'ami_responsive', 'ssl_labs', 'semrush', 'ahrefs', 'ubersuggest',
+                'sheets_audit', 'sheets_plan', 'gsc', 'mrm'
             ];
 
-            for (const step of steps) {
+            for (const stepKey of stepsKeys) {
                 await db.run(
                     'INSERT INTO audit_steps (id, audit_id, step_key, statut) VALUES (?, ?, ?, ?)',
-                    [uuidv4(), auditId, step.key, 'EN_ATTENTE']
+                    [uuidv4(), auditId, stepKey, 'EN_ATTENTE']
                 );
             }
-
-            // 3. Update Airtable Status
-            await table.update(airtableId, { "Statut": "En cours" });
 
             // 4. Add to BullMQ
             await auditQueue.add(`audit-${auditId}`, { auditId, userId: defaultUser.id });
@@ -153,7 +138,7 @@ async function syncAirtableToDb(io, db) {
                 user_id: defaultUser.id,
                 nom_site: siteName,
                 url_site: siteUrl,
-                statut_global: 'EN_COURS',
+                statut_global: 'EN_ATTENTE',
                 created_at: new Date().toISOString()
             });
         }

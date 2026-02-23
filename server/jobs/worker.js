@@ -39,6 +39,17 @@ export const initWorker = (io, db) => {
             const audit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
             if (!audit) throw new Error('Audit not found');
 
+            // 2. Initial Setup: Mark as "En cours" only when worker actually starts
+            console.log(`[WORKER] [JOB ${job.id}] Transitioning status to "EN_COURS"`);
+            await db.run('UPDATE audits SET statut_global = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['EN_COURS', auditId]);
+            if (audit.airtable_record_id) {
+                await updateAirtableStatut(audit.airtable_record_id, 'En cours');
+            }
+
+            // Emit update to clients
+            const initialUpdate = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+            io.to(`audit:${auditId}`).emit('audit:update', initialUpdate);
+
             let siteUrl = audit.url_site;
             if (siteUrl && !siteUrl.startsWith('http')) {
                 siteUrl = `https://${siteUrl}`;

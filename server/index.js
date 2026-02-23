@@ -222,7 +222,7 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
         const auditId = uuidv4();
         await db.run(
             'INSERT INTO audits (id, user_id, nom_site, url_site, sheet_audit_url, sheet_plan_url, mrm_report_url, airtable_record_id, statut_global) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [auditId, userId, siteName, siteUrl, auditSheetUrl, actionPlanSheetUrl, mrmReportUrl, airtableId, 'EN_COURS']
+            [auditId, userId, siteName, siteUrl, auditSheetUrl, actionPlanSheetUrl, mrmReportUrl, airtableId, 'EN_ATTENTE']
         );
 
         // 3. Initialize Steps
@@ -237,13 +237,6 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
                 'INSERT INTO audit_steps (id, audit_id, step_key, statut) VALUES (?, ?, ?, ?)',
                 [uuidv4(), auditId, stepKey, 'EN_ATTENTE']
             );
-        }
-
-        // 4. Update Airtable to "En cours" (Non-blocking)
-        try {
-            await updateAirtableStatut(airtableId, 'En cours');
-        } catch (e) {
-            console.error('[AIRTABLE] Failed to update status to "En cours":', e.message);
         }
 
         // 5. Add to BullMQ queue with timeout protection
