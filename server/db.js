@@ -1,12 +1,21 @@
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export async function initDb() {
   const dbPath = process.env.INTERNAL_DB_FILENAME || path.resolve(__dirname, '..', 'database.sqlite');
+
+  // Ensure the directory exists (CRITICAL for Railway)
+  const dbDir = path.dirname(dbPath);
+  if (!fs.existsSync(dbDir)) {
+    console.log(`[DB] Creating directory: ${dbDir}`);
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
   console.log(`[DB] Initializing database at: ${dbPath}`);
 
   const db = await open({

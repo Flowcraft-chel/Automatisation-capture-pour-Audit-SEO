@@ -3,6 +3,14 @@ import IORedis from 'ioredis';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
+if (process.env.PORT) { // We are likely on Railway
+    if (!process.env.REDIS_URL) {
+        console.warn('[WARNING] REDIS_URL is not set. Falling back to localhost, which will fail on Railway!');
+    } else {
+        console.log(`[REDIS] Using REDIS_URL from environment starting with: ${REDIS_URL.substring(0, 10)}...`);
+    }
+}
+
 // Configure IORedis with SSL if needed for Railway
 const redisOptions = {
     maxRetriesPerRequest: null,
