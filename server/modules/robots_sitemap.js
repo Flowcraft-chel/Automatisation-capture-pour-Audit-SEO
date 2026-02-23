@@ -30,22 +30,39 @@ export async function auditRobotsSitemap(url, auditId) {
             robotsResult.robots_txt.statut = 'ERROR';
             robotsResult.robots_txt.details = `Erreur HTTP: ${response ? response.status() : 'No response'}`;
         } else {
+            // --- STAGE 0: Professional Styling (Inject CSS) ---
+            await page.evaluate(() => {
+                const style = document.createElement('style');
+                style.textContent = `
+                    body {
+                        background-color: #0d1117 !important;
+                        color: #c9d1d9 !important;
+                        font-family: 'Fira Code', 'Courier New', monospace !important;
+                        padding: 40px !important;
+                        line-height: 1.6 !important;
+                        font-size: 16px !important;
+                        margin: 0 !important;
+                        white-space: pre-wrap !important;
+                        word-wrap: break-word !important;
+                    }
+                    pre { margin: 0 !important; white-space: pre-wrap !important; }
+                `;
+                document.head.appendChild(style);
+            });
+            await page.waitForTimeout(500);
+
             robotsResult.robots_txt.statut = 'SUCCESS';
 
-            // --- STAGE 1: Find Sitemap and Scroll ---
+            // --- STAGE 1: Extract Text and Locate Sitemap ---
             const sitemapInfo = await page.evaluate(() => {
-                const text = document.body.innerText;
-                console.log(`[EVALUATE] Page text length: ${text.length}`);
+                // Use textContent for "Pure" extraction, fallback to innerText
+                const text = document.body.textContent || document.body.innerText || "";
                 const lines = text.split('\n');
-                console.log(`[EVALUATE] Total lines: ${lines.length}`);
 
+                // Search for "Sitemap:" (case-insensitive)
                 const sitemapIndex = lines.findIndex(line => line.toLowerCase().includes('sitemap:'));
-                console.log(`[EVALUATE] Sitemap index found: ${sitemapIndex}`);
 
-                if (sitemapIndex === -1) {
-                    console.log('[EVALUATE] Full text snippet for debugging:', text.substring(0, 500));
-                    return null;
-                }
+                if (sitemapIndex === -1) return null;
 
                 return {
                     lineIndex: sitemapIndex,
@@ -55,26 +72,25 @@ export async function auditRobotsSitemap(url, auditId) {
             });
 
             if (sitemapInfo) {
-                console.log(`[MODULE-ROBOTS] Sitemap line found at index ${sitemapInfo.lineIndex}: ${sitemapInfo.text}`);
+                console.log(`[MODULE-ROBOTS] Sitemap discovered at line ${sitemapInfo.lineIndex}: ${sitemapInfo.text}`);
                 const sitemapMatch = sitemapInfo.text.match(/sitemaps?:\s*(https?:\/\/\S+)/i);
                 if (sitemapMatch) {
                     robotsResult.sitemap.url = sitemapMatch[1];
                     robotsResult.sitemap.statut = 'SUCCESS';
                 }
 
-                // Scroll to center the line
+                // Precision Scroll: Center the sitemap line in the viewport
                 await page.evaluate((index) => {
-                    // Estimate line height for scrolling if no DOM element is found (plain text pages)
-                    const lineHeight = 20;
-                    const scrollTop = (index * lineHeight) - (window.innerHeight / 2);
+                    const estimatedLineHeight = 26; // Based on 16px font + 1.6 line-height
+                    const offsetToPadding = 40;
+                    const scrollTop = (index * estimatedLineHeight) + offsetToPadding - (window.innerHeight / 2.5);
                     window.scrollTo(0, Math.max(0, scrollTop));
                 }, sitemapInfo.lineIndex);
-                await page.waitForTimeout(1000);
-                console.log('[MODULE-ROBOTS] Scrolled to sitemap area.');
+                await page.waitForTimeout(800);
             } else {
-                console.log('[MODULE-ROBOTS] No sitemap line found, remaining at top.');
+                console.log('[MODULE-ROBOTS] No sitemap link found. Defaulting to top capture.');
                 robotsResult.sitemap.statut = 'ERROR';
-                robotsResult.sitemap.details = 'Non trouvé dans robots.txt';
+                robotsResult.sitemap.details = 'Non présent dans robots.txt';
                 await page.evaluate(() => window.scrollTo(0, 0));
             }
 
@@ -82,43 +98,44 @@ export async function auditRobotsSitemap(url, auditId) {
             const viewportBuffer = await page.screenshot({ fullPage: false });
             const rawUrl = await uploadBufferToCloudinary(viewportBuffer, `robots-v3-raw-${auditId}.png`, 'audit-temp');
 
-            // --- STAGE 3: AI-Vision Precision Crop ---
-            console.log('[MODULE-ROBOTS] Requesting AI Precision Crop (v3)...');
+            // --- STAGE 3: AI-Vision Precision Cropping ---
+            // We ask the AI to "measure" and provide the best dimensions for a professional crop.
+            console.log('[MODULE-ROBOTS] AI Analysis for Precision Cropping...');
             const prompt = sitemapInfo
-                ? `This is a screenshot of a robots.txt file. I have scrolled to the 'Sitemap:' line. 
-                   Locate the line starting with 'Sitemap:'. 
-                   Provide coordinates for a crop that includes exactly 3 lines ABOVE the sitemap line, the sitemap line itself, and 3 lines BELOW it.
-                   The result MUST be a professional, centered view of the sitemap and its context.
-                   Return ONLY the coordinates in this format: CROP: x=0, y=[top], width=[total_width], height=[height]`
-                : `This is a screenshot of the top of a robots.txt file. 
-                   Provide coordinates for a crop that captures the first 8 lines of text.
-                   Return ONLY the coordinates in this format: CROP: x=0, y=0, width=[total_width], height=[height]`;
+                ? `This is a screenshot of a professional robots.txt rendering (dark mode, monospaced).
+                   Task: Locate the 'Sitemap:' line and provide coordinates for a "Pixel Perfect" crop.
+                   Measurement Advice: Include exactly 4 lines of context ABOVE and 4 lines BELOW the sitemap entry.
+                   Centering: The sitemap line must be vertically centered in the crop.
+                   Dimensions: Return ONLY the coordinates in this exact format: CROP: x=0, y=[top], width=[full_width], height=[total_height]`
+                : `This is a screenshot of the top of a robots.txt file.
+                   Task: Provide coordinates for a professional "Lambda" capture.
+                   Measurement Advice: Capture the top block of rules (about 10-12 lines).
+                   Dimensions: Return ONLY the coordinates in this exact format: CROP: x=0, y=0, width=[full_width], height=[total_height]`;
 
             const aiResponse = await analyzeImage(rawUrl, prompt);
-            console.log(`[MODULE-ROBOTS] AI Response: ${aiResponse}`);
+            console.log(`[MODULE-ROBOTS] AI Precision Data: ${aiResponse}`);
 
             const cropMatch = aiResponse.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
             if (cropMatch) {
                 let [_, x, y, width, height] = cropMatch.map(Number);
                 const metadata = await sharp(viewportBuffer).metadata();
-                console.log(`[MODULE-ROBOTS] Image Metadata: ${metadata.width}x${metadata.height}. AI Requested: x=${x}, y=${y}, w=${width}, h=${height}`);
 
-                // Defensive capping
-                x = Math.max(0, Math.min(x, metadata.width - 10));
-                y = Math.max(0, Math.min(y, metadata.height - 10));
+                // Defensive Capping & Normalization based on AI measures
+                x = Math.max(0, Math.min(x, metadata.width - 50));
+                y = Math.max(0, Math.min(y, metadata.height - 50));
                 width = Math.min(width, metadata.width - x);
                 height = Math.min(height, metadata.height - y);
 
-                console.log(`[MODULE-ROBOTS] Applying Final Crop: x=${x}, y=${y}, w=${width}, h=${height}`);
+                console.log(`[MODULE-ROBOTS] Applying Perfect Crop: x=${x}, y=${y}, w=${width}, h=${height}`);
 
                 const finalBuffer = await sharp(viewportBuffer)
                     .extract({ left: x, top: y, width: width, height: height })
                     .toBuffer();
 
-                const finalUrl = await uploadBufferToCloudinary(finalBuffer, `robots-premium-v3-${auditId}.png`, 'audit-captures');
+                const finalUrl = await uploadBufferToCloudinary(finalBuffer, `robots-pixel-perfect-${auditId}.png`, 'audit-captures');
                 robotsResult.robots_txt.capture = finalUrl;
             } else {
-                console.warn('[MODULE-ROBOTS] AI did not return valid coordinates, using full viewport.');
+                console.warn('[MODULE-ROBOTS] AI measurements failed, fallback to raw viewport.');
                 robotsResult.robots_txt.capture = rawUrl;
             }
         }
