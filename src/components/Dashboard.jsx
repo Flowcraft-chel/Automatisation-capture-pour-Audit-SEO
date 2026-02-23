@@ -66,7 +66,7 @@ const Layout = ({ user, onLogout }) => {
                     </button>
                 </div>
 
-                <nav className="flex-1 px-4 py-6 space-y-2">
+                <nav className="flex-1 px-3 py-6 space-y-2 flex flex-col items-center">
                     {menuItems.map((item) => {
                         const Icon = item.icon;
                         const isActive = activeTab === item.id;
@@ -77,28 +77,38 @@ const Layout = ({ user, onLogout }) => {
                                     handleTabChange(item.id);
                                     if (window.innerWidth < 1024) setSidebarOpen(false);
                                 }}
-                                className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200 group relative ${isActive
+                                className={`w-full flex items-center p-3 rounded-xl transition-all duration-200 group relative ${isActive
                                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
                                     : 'text-slate-400 hover:bg-white/5 hover:text-white'
-                                    }`}
+                                    } ${!isSidebarOpen ? 'justify-center lg:w-12 lg:h-12' : 'gap-4'}`}
                             >
-                                <Icon size={26} className={`${isActive ? 'scale-110' : 'group-hover:scale-110'} transition-transform duration-300`} />
-                                <span className={`font-medium transition-opacity ${!isSidebarOpen && 'lg:opacity-0 lg:w-0 overflow-hidden'}`}>{item.label}</span>
-                                {isActive && (
-                                    <div className="absolute left-0 w-1 h-6 bg-white rounded-r-full" />
+                                <Icon
+                                    size={24}
+                                    className={`${isActive ? 'scale-110' : 'group-hover:scale-110'} transition-transform duration-300 shrink-0`}
+                                />
+                                {isSidebarOpen && (
+                                    <span className="font-medium whitespace-nowrap overflow-hidden transition-all duration-300">
+                                        {item.label}
+                                    </span>
+                                )}
+                                {!isSidebarOpen && (
+                                    <div className="absolute left-full ml-4 px-2 py-1 bg-slate-800 text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">
+                                        {item.label}
+                                    </div>
                                 )}
                             </button>
                         );
                     })}
                 </nav>
 
-                <div className="p-4 border-t border-white/5 space-y-2">
+                <div className="p-4 border-t border-white/5 flex justify-center">
                     <button
                         onClick={onLogout}
-                        className="w-full flex items-center gap-4 p-3 rounded-xl text-red-400 hover:bg-red-500/10 transition-all font-medium"
+                        className={`flex items - center rounded - xl text - red - 400 hover: bg - red - 500 / 10 transition - all font - medium ${!isSidebarOpen ? 'lg:w-12 lg:h-12 justify-center' : 'w-full gap-4 p-3'} `}
+                        title="Déconnexion"
                     >
-                        <LogOut size={24} />
-                        <span className={`${!isSidebarOpen && 'lg:opacity-0 lg:w-0 overflow-hidden'}`}>Déconnexion</span>
+                        <LogOut size={22} className="shrink-0" />
+                        {isSidebarOpen && <span>Déconnexion</span>}
                     </button>
                 </div>
             </aside>

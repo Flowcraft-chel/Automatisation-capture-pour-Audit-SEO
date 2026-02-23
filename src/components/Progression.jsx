@@ -102,43 +102,69 @@ const Progression = () => {
         }
     }, [activeAudit?.id]);
 
-    const getStatusIcon = (status) => {
+    const getStepIcon = (stepKey, status) => {
         const s = status?.toUpperCase();
-        switch (s) {
-            case 'SUCCESS':
-            case 'SUCCES': return <CheckCircle2 className="w-5 h-5 text-green-400" />;
-            case 'ERROR':
-            case 'ERREUR': return <XCircle className="w-5 h-5 text-red-400" />;
-            case 'EN_COURS': return <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />;
-            case 'IA_EN_COURS': return <Bot className="w-5 h-5 text-purple-400 animate-pulse" />;
-            case 'FAIT': return <CheckCircle2 className="w-5 h-5 text-green-400" />;
-            default: return <Hourglass className="w-5 h-5 text-slate-500" />;
-        }
+        const isPending = s === 'EN_ATTENTE' || !s;
+        const color = isPending ? 'text-slate-500' :
+            (s === 'SUCCESS' || s === 'SUCCES' || s === 'FAIT' ? 'text-green-400' :
+                (s === 'ERROR' || s === 'ERREUR' ? 'text-red-400' : 'text-blue-400'));
+
+        const icons = {
+            robots_txt: Hourglass,
+            sitemap: Hourglass,
+            logo: Bot,
+            psi_mobile: Hourglass,
+            psi_desktop: Hourglass,
+            ami_responsive: Hourglass,
+            ssl_labs: Hourglass,
+            semrush: Hourglass,
+            ahrefs: Hourglass,
+            ubersuggest: Hourglass,
+            sheets_audit: Hourglass,
+            sheets_plan: Hourglass,
+            gsc: Hourglass,
+            mrm: Hourglass
+        };
+
+        const IconComponent = icons[stepKey] || Hourglass;
+
+        if (s === 'EN_COURS') return <RefreshCw className={`w-6 h-6 ${color} animate-spin`} />;
+        if (s === 'IA_EN_COURS') return <Bot className={`w-6 h-6 ${color} animate-pulse`} />;
+
+        return <IconComponent className={`w-6 h-6 ${color}`} />;
     };
 
     const StepItem = ({ step }) => (
         <div className="flex flex-col p-4 rounded-xl border border-white/5 bg-slate-900/30 hover:bg-slate-900/50 transition-all group gap-2">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-slate-800 border border-white/5 group-hover:border-blue-500/30 transition-all">
-                        {getStatusIcon(step.statut)}
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center bg-slate-800 border border-white/5 group-hover:border-blue-500/30 transition-all ${['SUCCESS', 'SUCCES', 'FAIT'].includes(step.statut?.toUpperCase()) ? 'bg-green-500/5 border-green-500/20' : ''
+                        }`}>
+                        {getStepIcon(step.step_key, step.statut)}
                     </div>
                     <div>
-                        <h4 className="font-medium text-sm text-slate-200 capitalize">{step.step_key.replace(/_/g, ' ')}</h4>
-                        <p className="text-[10px] text-slate-500 uppercase tracking-widest">{step.statut}</p>
+                        <h4 className="font-semibold text-sm text-slate-200 capitalize leading-none mb-1">{step.step_key.replace(/_/g, ' ')}</h4>
+                        <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-bold uppercase tracking-tight px-1.5 py-0.5 rounded ${step.statut === 'SUCCESS' ? 'bg-green-500/10 text-green-500' :
+                                    step.statut === 'EN_COURS' ? 'bg-blue-500/10 text-blue-400' :
+                                        'bg-slate-800 text-slate-500'
+                                }`}>
+                                {step.statut}
+                            </span>
+                        </div>
                     </div>
                 </div>
                 <div className="flex items-center gap-4">
                     {step.output_cloudinary_url && (
-                        <a href={step.output_cloudinary_url} target="_blank" rel="noreferrer" className="p-2 hover:bg-blue-500/10 rounded-lg text-blue-400 transition-all">
+                        <a href={step.output_cloudinary_url} target="_blank" rel="noreferrer" className="p-2 hover:bg-blue-500/10 rounded-lg text-blue-400 transition-all" title="Voir la capture">
                             <ExternalLink className="w-4 h-4" />
                         </a>
                     )}
                 </div>
             </div>
             {step.resultat && (
-                <div className="mt-1 pl-14">
-                    <p className="text-[11px] text-slate-400 leading-relaxed bg-slate-800/20 p-2 rounded-lg italic">
+                <div className="mt-1 pl-16">
+                    <p className="text-[11px] text-slate-400 leading-relaxed bg-slate-800/20 p-2 rounded-lg border border-white/5">
                         {step.resultat.replace(/^"|"$/g, '')}
                     </p>
                 </div>
