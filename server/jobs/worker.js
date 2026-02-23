@@ -70,6 +70,7 @@ export const initWorker = (io, db) => {
 
             // Sequence of steps
             // STEP 1: Robots & Sitemap
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Robots & Sitemap...`);
             await updateStep('robots_txt', 'EN_COURS');
             const robotsResult = await auditRobotsSitemap(siteUrl, auditId);
 
@@ -78,6 +79,7 @@ export const initWorker = (io, db) => {
             // Sync Robots to Airtable
             if (audit.airtable_record_id) {
                 if (robotsResult.robots_txt.statut === 'SUCCESS') {
+                    console.log(`[WORKER] [JOB ${job.id}] Syncing Robots URL to Airtable...`);
                     await updateAirtableField(audit.airtable_record_id, 'robot', robotsResult.robots_txt.url);
                     if (robotsResult.robots_txt.capture) {
                         await updateAirtableField(audit.airtable_record_id, 'Img_Robots_Txt', robotsResult.robots_txt.capture);
@@ -85,15 +87,17 @@ export const initWorker = (io, db) => {
                 }
             }
 
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Sitemap...`);
             await updateStep('sitemap', 'EN_COURS');
             await updateStep('sitemap', robotsResult.sitemap.statut, robotsResult.sitemap.details, robotsResult.sitemap.capture);
 
             // Sync Sitemap to Airtable
             if (audit.airtable_record_id) {
                 if (robotsResult.sitemap.statut === 'SUCCESS') {
+                    console.log(`[WORKER] [JOB ${job.id}] Syncing Sitemap URL to Airtable...`);
                     await updateAirtableField(audit.airtable_record_id, 'sitemaps', robotsResult.sitemap.url);
                     if (robotsResult.sitemap.capture) {
-                        console.log(`[WORKER] SYNCING SITEMAP CAPTURE TO Img_Sitemap: ${robotsResult.sitemap.capture}`);
+                        console.log(`[WORKER] [JOB ${job.id}] Syncing Sitemap Capture to Airtable...`);
                         await updateAirtableField(audit.airtable_record_id, 'Img_Sitemap', robotsResult.sitemap.capture);
                     }
                 } else {
@@ -102,6 +106,7 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 2: Logo Extraction
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Logo Extraction...`);
             await updateStep('logo', 'IA_EN_COURS');
             const logoResult = await extractLogo(siteUrl, auditId);
 
@@ -110,11 +115,13 @@ export const initWorker = (io, db) => {
             // Sync Logo to Airtable
             if (audit.airtable_record_id) {
                 if (logoResult.statut === 'SUCCESS' && logoResult.url) {
+                    console.log(`[WORKER] [JOB ${job.id}] Syncing Logo to Airtable...`);
                     await updateAirtableField(audit.airtable_record_id, 'Img_Logo', logoResult.url);
                 }
             }
 
             // STEP 3: Placeholder for others (Sequential loop)
+            console.log(`[WORKER] [JOB ${job.id}] Executing Remaining Steps (Psi, Semi, etc.)...`);
             const remainingSteps = [
                 'psi_mobile', 'psi_desktop',
                 'ami_responsive', 'ssl_labs', 'semrush', 'ahrefs', 'ubersuggest',
@@ -128,11 +135,13 @@ export const initWorker = (io, db) => {
             }
 
             // Global Success
+            console.log(`[WORKER] [JOB ${job.id}] Finalizing Audit ${auditId}...`);
             await db.run('UPDATE audits SET statut_global = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['TERMINE', auditId]);
 
             // Sync to Airtable (Non-blocking)
             if (audit.airtable_record_id) {
                 try {
+                    console.log(`[WORKER] [JOB ${job.id}] Updating Airtable Status to 'fait'...`);
                     await updateAirtableStatut(audit.airtable_record_id, 'fait');
                 } catch (e) {
                     console.error('[WORKER] Failed to sync "Terminé" to Airtable:', e.message);
@@ -148,7 +157,9 @@ export const initWorker = (io, db) => {
             console.error(`[WORKER] [JOB ${job.id}] Audit ${auditId} failed:`, err);
             await db.run('UPDATE audits SET statut_global = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['ERREUR', auditId]);
             const finalAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
-            io.to(`audit:${auditId}`).emit('audit:update', finalAudit);
+            if (finalAudit) {
+                io.to(`audit:${auditId}`).emit('audit:update', finalAudit);
+            }
         }
 
     }, { connection });

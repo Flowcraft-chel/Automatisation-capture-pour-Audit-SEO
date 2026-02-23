@@ -29,7 +29,7 @@ export async function captureSession(service, userId) {
 
         // Ensure atomic launch
         context = await chromium.launchPersistentContext(userSessionDir, {
-            headless: false,
+            headless: true, // Switched to true for Railway compatibility
             viewport: { width: 1280, height: 720 },
             args: [
                 '--no-sandbox',
@@ -52,7 +52,6 @@ export async function captureSession(service, userId) {
         console.log(`[SESSION] En attente de détection de connexion pour ${service}...`);
 
         if (service === 'google') {
-            // Google specific wait: either redirect to myaccount or search or just any page after login
             await page.waitForURL(url => {
                 const s = url.toString();
                 return s.includes('myaccount.google.com') || s.includes('google.com/search') || s.includes('mail.google.com') || s.includes('drive.google.com');
@@ -61,22 +60,24 @@ export async function captureSession(service, userId) {
             await page.waitForURL(url => url.includes('/dashboard'), { timeout: 300000 });
         } else {
             await page.waitForURL(url => !url.includes('login'), { timeout: 300000 });
-            console.log(`[SESSION] Connexion détectée ! Finalisation...`);
-            await page.waitForTimeout(3000); // Give it time to settle cookies
-
-            const cookies = await context.cookies();
-            const encryptedCookies = encrypt(JSON.stringify(cookies));
-
-            console.log(`[SESSION] SUCCESS: Cookies capturés pour ${service}`);
-
-            await context.close();
-            return { service, status: 'connected', encryptedCookies };
-
-        } catch (err) {
-            console.error(`[SESSION] CRITICAL ERROR:`, err);
-            if (context) {
-                try { await context.close(); } catch (e) { }
-            }
-            throw new Error(`Échec de la capture: ${err.message}`);
         }
+
+        console.log(`[SESSION] Connexion détectée ! Finalisation...`);
+        await page.waitForTimeout(3000); // Give it time to settle cookies
+
+        const cookies = await context.cookies();
+        const encryptedCookies = encrypt(JSON.stringify(cookies));
+
+        console.log(`[SESSION] SUCCESS: Cookies capturés pour ${service}`);
+
+        await context.close();
+        return { service, status: 'connected', encryptedCookies };
+
+    } catch (err) {
+        console.error(`[SESSION] CRITICAL ERROR:`, err);
+        if (context) {
+            try { await context.close(); } catch (e) { }
+        }
+        throw new Error(`Échec de la capture: ${err.message}`);
     }
+}
