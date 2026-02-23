@@ -138,6 +138,7 @@ export async function auditRobotsSitemap(url, auditId) {
             } else {
                 console.warn('[MODULE-ROBOTS] AI measurements failed, fallback to raw viewport.');
                 robotsResult.robots_txt.capture = rawUrl;
+                robotsResult.sitemap.capture = rawUrl;
             }
         }
     } catch (err) {
