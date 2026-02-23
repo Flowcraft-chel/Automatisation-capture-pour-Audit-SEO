@@ -66,16 +66,27 @@ const authenticateToken = (req, res, next) => {
 
 let db;
 
-initDb().then(database => {
-    db = database;
-    console.log('Database initialized');
-    // Initialize BullMQ Worker
-    initWorker(io, db);
-    // Initialize Airtable Poller (Background Sync)
-    initAirtablePoller(io, db);
-}).catch(err => {
-    console.error('Failed to initialize database:', err);
-});
+async function startServer() {
+    try {
+        db = await initDb();
+        console.log('[DB] Database initialized successfully');
+
+        // Initialize Background Services
+        initWorker(io, db);
+        initAirtablePoller(io, db);
+
+        httpServer.listen(PORT, () => {
+            console.log(`[SERVER] Running on port ${PORT}`);
+            console.log(`[SERVER] Serving static files from: ${distPath}`);
+            console.log(`[SERVER] API available at http://localhost:${PORT}/api`);
+        });
+    } catch (err) {
+        console.error('[CRITICAL] Failed to initialize database:', err);
+        process.exit(1);
+    }
+}
+
+startServer();
 
 // Socket.io Room Logic
 io.on('connection', (socket) => {
@@ -131,6 +142,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     try {
+        console.log(`[AUTH] Login attempt for: ${email}`);
         const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
         if (user && await bcrypt.compare(password, user.password)) {
             // Success: Reset attempts
@@ -234,8 +246,19 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             console.error('[AIRTABLE] Failed to update status to "En cours":', e.message);
         }
 
-        // 5. Add to BullMQ queue
-        await auditQueue.add(`audit-${auditId}`, { auditId, userId });
+        // 5. Add to BullMQ queue with timeout protection
+        try {
+            const queuePromise = auditQueue.add(`audit-${auditId}`, { auditId, userId });
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Redis Timeout')), 5000)
+            );
+            await Promise.race([queuePromise, timeoutPromise]);
+            console.log(`[QUEUE] Audit ${auditId} successfully added to queue`);
+        } catch (queueErr) {
+            console.error('[QUEUE ERROR]:', queueErr.message);
+            // We continue even if queueing fails, as Airtable is already updated
+            // and the poller might pick it up later as a fallback if implemented
+        }
 
         // 6. Notify clients via Socket.io
         io.emit('audit:created', { id: auditId, user_id: userId, nom_site: siteName, url_site: siteUrl, statut_global: 'EN_COURS', created_at: new Date().toISOString() });
@@ -304,7 +327,4 @@ app.use((req, res) => {
     });
 });
 
-httpServer.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Serving static files from: ${distPath}`);
-});
+// Server start moved to startServer() wrapper above

@@ -8,12 +8,26 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
 console.log(`[WORKER] Redis URL detected: ${REDIS_URL}`);
 
-const connection = new IORedis(REDIS_URL, {
-    maxRetriesPerRequest: null
-});
+// Configure IORedis with SSL if needed for Railway
+const redisOptions = {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy: (times) => {
+        const delay = Math.min(times * 50, 2000);
+        return delay;
+    }
+};
+
+if (REDIS_URL.startsWith('rediss://')) {
+    redisOptions.tls = {
+        rejectUnauthorized: false
+    };
+}
+
+const connection = new IORedis(REDIS_URL, redisOptions);
 
 connection.on('error', (err) => {
-    console.error('[WORKER] Redis Connection Error:', err.message);
+    console.error('[REDIS WORKER ERROR]:', err.message);
 });
 
 connection.on('connect', () => {

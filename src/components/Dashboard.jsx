@@ -82,7 +82,7 @@ const Layout = ({ user, onLogout }) => {
                                     : 'text-slate-400 hover:bg-white/5 hover:text-white'
                                     }`}
                             >
-                                <Icon size={22} className={`${isActive ? 'scale-110' : 'group-hover:scale-110'} transition-transform duration-300`} />
+                                <Icon size={26} className={`${isActive ? 'scale-110' : 'group-hover:scale-110'} transition-transform duration-300`} />
                                 <span className={`font-medium transition-opacity ${!isSidebarOpen && 'lg:opacity-0 lg:w-0 overflow-hidden'}`}>{item.label}</span>
                                 {isActive && (
                                     <div className="absolute left-0 w-1 h-6 bg-white rounded-r-full" />
@@ -97,7 +97,7 @@ const Layout = ({ user, onLogout }) => {
                         onClick={onLogout}
                         className="w-full flex items-center gap-4 p-3 rounded-xl text-red-400 hover:bg-red-500/10 transition-all font-medium"
                     >
-                        <LogOut size={20} />
+                        <LogOut size={24} />
                         <span className={`${!isSidebarOpen && 'lg:opacity-0 lg:w-0 overflow-hidden'}`}>Déconnexion</span>
                     </button>
                 </div>

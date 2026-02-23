@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export async function initDb() {
-  const dbPath = path.resolve(__dirname, '..', 'database.sqlite');
+  const dbPath = process.env.INTERNAL_DB_FILENAME || path.resolve(__dirname, '..', 'database.sqlite');
   console.log(`[DB] Initializing database at: ${dbPath}`);
 
   const db = await open({
