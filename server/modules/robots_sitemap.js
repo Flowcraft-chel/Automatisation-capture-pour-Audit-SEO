@@ -134,6 +134,7 @@ export async function auditRobotsSitemap(url, auditId) {
 
                 const finalUrl = await uploadBufferToCloudinary(finalBuffer, `robots-pixel-perfect-${auditId}.png`, 'audit-captures');
                 robotsResult.robots_txt.capture = finalUrl;
+                robotsResult.sitemap.capture = finalUrl; // Ensure sitemap capture is also populated for Airtable sync
             } else {
                 console.warn('[MODULE-ROBOTS] AI measurements failed, fallback to raw viewport.');
                 robotsResult.robots_txt.capture = rawUrl;
