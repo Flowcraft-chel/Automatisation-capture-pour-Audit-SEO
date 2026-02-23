@@ -1,37 +1,33 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_URL = process.env.REDIS_URL;
 
-if (process.env.PORT) { // We are likely on Railway
-    if (!process.env.REDIS_URL) {
-        console.warn('[WARNING] REDIS_URL is not set. Falling back to localhost, which will fail on Railway!');
+if (!REDIS_URL) {
+    if (process.env.RAILWAY_STATIC_URL || process.env.PORT) {
+        console.error('❌ [REDIS] FATAL: REDIS_URL is missing on Railway!');
     } else {
-        console.log(`[REDIS] Using REDIS_URL from environment starting with: ${REDIS_URL.substring(0, 10)}...`);
+        console.warn('⚠️ [REDIS] REDIS_URL not found, using default localhost');
     }
 }
 
-// Configure IORedis with SSL if needed for Railway
+const finalRedisUrl = REDIS_URL || 'redis://localhost:6379';
+console.log(`[REDIS] Initializing connection to: ${finalRedisUrl.substring(0, 15)}...`);
+
 const redisOptions = {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
-    retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-    }
+    retryStrategy: (times) => Math.min(times * 50, 2000)
 };
 
-// Railway's Redis often requires SSL (rediss://)
-if (REDIS_URL.startsWith('rediss://')) {
-    redisOptions.tls = {
-        rejectUnauthorized: false
-    };
+if (finalRedisUrl.startsWith('rediss://')) {
+    redisOptions.tls = { rejectUnauthorized: false };
 }
 
-const connection = new IORedis(REDIS_URL, redisOptions);
+const connection = new IORedis(finalRedisUrl, redisOptions);
 
 connection.on('error', (err) => {
-    console.error('[REDIS QUEUE ERROR]:', err.message);
+    console.error(`❌ [REDIS ERROR] ${err.message}`);
 });
 
 export const auditQueue = new Queue('audit-jobs', {
