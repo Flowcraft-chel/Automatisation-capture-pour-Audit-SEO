@@ -134,7 +134,7 @@ export const initWorker = (io, db) => {
             const sslResult = await auditSslLabs(domain, auditId);
             await updateStep('ssl_labs', sslResult.statut, null, sslResult.capture);
             if (audit.airtable_record_id && sslResult.capture) {
-                await updateAirtableField(audit.airtable_record_id, 'Img_Ssl_Labs', sslResult.capture);
+                await updateAirtableField(audit.airtable_record_id, 'Img_SSL', sslResult.capture);
             }
 
             // STEP 4: Responsive Check
@@ -143,7 +143,7 @@ export const initWorker = (io, db) => {
             const respResult = await auditResponsive(siteUrl, auditId);
             await updateStep('ami_responsive', respResult.statut, null, respResult.capture);
             if (audit.airtable_record_id && respResult.capture) {
-                await updateAirtableField(audit.airtable_record_id, 'Img_Responsive', respResult.capture);
+                await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture);
             }
 
             // STEP 5: PageSpeed Mobile
@@ -152,8 +152,11 @@ export const initWorker = (io, db) => {
             const psiMobile = await auditPageSpeed(siteUrl, auditId, 'mobile');
             await updateStep('psi_mobile', psiMobile.statut, psiMobile.details, psiMobile.capture);
             if (audit.airtable_record_id) {
-                if (psiMobile.score) await updateAirtableField(audit.airtable_record_id, 'mobilescore', psiMobile.score);
-                if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PageSpeed_Mobile', psiMobile.capture);
+                if (psiMobile.score) {
+                    const mobileScorePercent = psiMobile.score / 100;
+                    await updateAirtableField(audit.airtable_record_id, 'pourcentage smartphone', mobileScorePercent);
+                }
+                if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Mobile', psiMobile.capture);
             }
 
             // STEP 6: PageSpeed Desktop
@@ -162,8 +165,11 @@ export const initWorker = (io, db) => {
             const psiDesktop = await auditPageSpeed(siteUrl, auditId, 'desktop');
             await updateStep('psi_desktop', psiDesktop.statut, psiDesktop.details, psiDesktop.capture);
             if (audit.airtable_record_id) {
-                if (psiDesktop.score) await updateAirtableField(audit.airtable_record_id, 'desktopscore', psiDesktop.score);
-                if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PageSpeed_Desktop', psiDesktop.capture);
+                if (psiDesktop.score) {
+                    const desktopScorePercent = psiDesktop.score / 100;
+                    await updateAirtableField(audit.airtable_record_id, 'pourcentage desktop', desktopScorePercent);
+                }
+                if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Desktop', psiDesktop.capture);
             }
 
             // STEP 7: Placeholder for others (Sequential loop)

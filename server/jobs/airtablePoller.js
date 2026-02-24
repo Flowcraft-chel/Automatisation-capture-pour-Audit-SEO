@@ -84,10 +84,10 @@ async function syncAirtableToDb(io, db) {
                     { key: 'robots_txt', field: 'Img_Robots_Txt' },
                     { key: 'sitemap', field: 'Img_Sitemap' },
                     { key: 'logo', field: 'Img_Logo' },
-                    { key: 'ssl_labs', field: 'Img_Ssl_Labs' },
-                    { key: 'ami_responsive', field: 'Img_Responsive' },
-                    { key: 'psi_mobile', field: 'Img_PageSpeed_Mobile' },
-                    { key: 'psi_desktop', field: 'Img_PageSpeed_Desktop' }
+                    { key: 'ssl_labs', field: 'Img_SSL' },
+                    { key: 'ami_responsive', field: 'Img_AmIResponsive' },
+                    { key: 'psi_mobile', field: 'Img_PSI_Mobile' },
+                    { key: 'psi_desktop', field: 'Img_PSI_Desktop' }
                 ];
 
                 for (const mapping of stepMappings) {

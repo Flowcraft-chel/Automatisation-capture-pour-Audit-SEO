@@ -10,8 +10,8 @@ import { uploadToCloudinary } from '../utils/cloudinary.js';
  * @param {string} auditId - Internal audit ID
  */
 export async function auditResponsive(url, auditId) {
-    const encodedUrl = encodeURIComponent(url);
-    const amiUrl = `https://ami.responsivedesign.is/?url=${encodedUrl}`;
+    const domain = new URL(url).hostname;
+    const amiUrl = `http://amiresponsive.co.uk/?site=${domain}`;
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
         viewport: { width: 1600, height: 1200 }
@@ -25,28 +25,38 @@ export async function auditResponsive(url, auditId) {
     };
 
     try {
-        console.log(`[MODULE-RESPONSIVE] Starting check for ${url}...`);
+        console.log(`[MODULE-RESPONSIVE] Starting check for ${domain}...`);
         await page.goto(amiUrl, { waitUntil: 'networkidle', timeout: 60000 });
 
-        // Wait for the preview items to load
-        await page.waitForTimeout(5000);
+        // Wait for devices block to be visible
+        console.log('[MODULE-RESPONSIVE] Waiting for .devices block...');
+        await page.waitForSelector('.devices', { state: 'visible', timeout: 30000 });
 
-        // Check for X-Frame-Options or connection issues inside the tool
-        // AMI Responsive uses iframes. If the site blocks iframes, it won't show.
+        // Patiently wait for animations and iframe loads
+        await page.waitForTimeout(8000);
+
+        // Check for X-Frame-Options or CSP blocks inside the tool
         const iframeError = await page.evaluate(() => {
-            // Check if devices are empty or if there's a specific error message
-            const screens = document.querySelectorAll('.screen');
-            let hasContent = false;
-            screens.forEach(s => {
-                if (s.querySelector('iframe')) hasContent = true;
+            const iframes = Array.from(document.querySelectorAll('.screen iframe'));
+            if (iframes.length === 0) return true;
+
+            // Try to detect if iframes are empty or showing error
+            // (Note: cross-origin check is limited, but we check presence and visibility)
+            return iframes.some(f => {
+                try {
+                    return !f.contentDocument && !f.contentWindow;
+                } catch (e) {
+                    // If we can't access contentDocument due to CORS, it might be loading fine
+                    return false;
+                }
             });
-            return !hasContent;
         });
 
         if (iframeError) {
-            console.log('[MODULE-RESPONSIVE] Site blocks iframe. Injecting alert band.');
+            console.log('[MODULE-RESPONSIVE] Site likely blocks iframe. Injecting alert band.');
             await page.evaluate(() => {
                 const band = document.createElement('div');
+                band.id = 'security-alert-band';
                 band.style.backgroundColor = '#ff4d4d';
                 band.style.color = 'white';
                 band.style.padding = '20px';
@@ -54,27 +64,25 @@ export async function auditResponsive(url, auditId) {
                 band.style.fontSize = '24px';
                 band.style.fontWeight = 'bold';
                 band.style.zIndex = '9999';
-                band.style.position = 'fixed';
+                band.style.position = 'absolute';
                 band.style.top = '0';
                 band.style.left = '0';
                 band.style.width = '100%';
-                band.innerHTML = '⚠️ ATTENTION : LE SITE BLOQUE LA PRÉVISUALISATION (X-FRAME-OPTIONS) OU N\'EST PAS RESPONSIVE';
-                document.body.prepend(band);
+                band.innerHTML = '⚠️ SITE BLOCKS IFRAMES / CSP';
+                document.querySelector('.devices').prepend(band);
             });
         }
 
-        // Take Screenshot of the multi-device view
+        // Take Screenshot of only the devices part
         const screenshotPath = path.resolve(`temp_responsive_${uuidv4()}.png`);
+        const devicesElement = await page.$('.devices');
 
-        // Hide the top selector to focus on results
-        await page.evaluate(() => {
-            const header = document.querySelector('header');
-            if (header) header.style.display = 'none';
-            const urlInput = document.getElementById('url-input-container');
-            if (urlInput) urlInput.style.display = 'none';
-        });
-
-        await page.screenshot({ path: screenshotPath, fullPage: false });
+        if (devicesElement) {
+            await devicesElement.screenshot({ path: screenshotPath });
+        } else {
+            // Fallback to full page if selector fails for some reason
+            await page.screenshot({ path: screenshotPath, fullPage: false });
+        }
 
         console.log('[MODULE-RESPONSIVE] Uploading to Cloudinary...');
         const cloudRes = await uploadToCloudinary(screenshotPath, `audit-results/responsive-${auditId}`);

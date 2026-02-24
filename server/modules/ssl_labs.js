@@ -32,15 +32,16 @@ export async function auditSslLabs(domain, auditId) {
         // Handling polling
         let finished = false;
         let attempts = 0;
-        const maxAttempts = 20; // 20 * 15s = 5 mins max
+        const maxAttempts = 40; // 40 * 15s = 10 mins max
 
         while (!finished && attempts < maxAttempts) {
             attempts++;
             console.log(`[MODULE-SSL] Waiting for analysis... Attempt ${attempts}/${maxAttempts}`);
 
-            // Check if multiple IPs are present
+            // Check if multiple IPs are present and we are not already on an IP analysis page
+            const currentUrl = page.url();
             const ipLinks = await page.$$('a[href*="analyze.html?d="][href*="&s="]');
-            if (ipLinks.length > 0) {
+            if (ipLinks.length > 0 && !currentUrl.includes('&s=')) {
                 console.log(`[MODULE-SSL] Multiple IPs detected. Clicking the first one.`);
                 await ipLinks[0].click();
                 await page.waitForLoadState('networkidle');
@@ -73,7 +74,7 @@ export async function auditSslLabs(domain, auditId) {
 
         // AI-Driven Precision Crop
         console.log('[MODULE-SSL] Coordinating with AI for precision cropping...');
-        const cropPrompt = "Locate the SSL Report Summary block. It contains the Grade (e.g., A, B, C) and the bar charts for Certificate, Protocol Support, etc. IMPORTANT: Trim empty space. Return CROP: x=[left], y=[top], width=[target_width], height=[total_height].";
+        const cropPrompt = "Locate the SSL Report Summary block (Grade, Certificate, Protocol Support charts). IMPORTANT: TRUNCATE ALL EMPTY WHITE SPACE ON THE RIGHT SIDE. The crop must be narrow, matching exactly the summary tables. Return CROP: x=[left], y=[top], width=[narrow_content_width], height=[total_height].";
 
         const cropCoords = await analyzeImage(fullPath, cropPrompt);
 

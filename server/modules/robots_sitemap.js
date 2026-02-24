@@ -79,8 +79,8 @@ export async function auditRobotsSitemap(url, auditId) {
             const robotsRawUrl = await uploadBufferToCloudinary(robotsViewportBuffer, `robots-raw-${auditId}.png`, 'audit-temp');
 
             const robotsPrompt = sitemapInfo
-                ? "Locate the 'Sitemap:' line. IMPORTANT: Trim all empty white space on the right side (narrow crop matching text). Return CROP: x=0, y=[top], width=[target_width], height=[total_height] with 4 lines context above/below."
-                : "Capture the top block of rules. IMPORTANT: Trim all empty white space on the right side (narrow crop matching text). Return CROP: x=0, y=0, width=[target_width], height=[total_height]";
+                ? "Locate the 'Sitemap:' line and surrounding text. IMPORTANT: Trim all empty white space on the right side. The width MUST be narrow, matching only the text. Return CROP: x=0, y=[top], width=[content_width], height=[content_height]. Aim for 10 lines of context."
+                : "Capture the robots.txt rules. IMPORTANT: Trim all empty white space on the right side. The width MUST be very narrow, matching only the text lines. Return CROP: x=0, y=0, width=[content_width], height=[content_height]";
 
             const robotsAiRes = await analyzeImage(robotsRawUrl, robotsPrompt);
             const rMatch = robotsAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
