@@ -41,10 +41,34 @@ async function cropWithAI(imagePath, prompt) {
 // ── Navigate to a sheet and select a specific tab by name ────────────────────
 async function navigateToTab(page, tabName) {
     console.log(`[SHEETS] Navigating to tab: "${tabName}"`);
+
+    // Temporarily show the tab bar (our CSS hides it)
+    await page.evaluate(() => {
+        const tabBar = document.querySelector('.docs-sheet-tab-bar') ||
+            document.querySelector('.grid-bottom-bar');
+        if (tabBar) tabBar.style.display = 'block';
+    });
     await page.waitForTimeout(2000);
 
     const result = await page.evaluate((name) => {
-        const tabs = Array.from(document.querySelectorAll('.docs-sheet-tab-name'));
+        // Try multiple selectors for tab names (different in logged-in vs public view)
+        const tabSelectors = [
+            '.docs-sheet-tab-name',
+            '.docs-sheet-tab .docs-sheet-tab-caption',
+            '[data-tab-name]',
+            '.docs-sheet-tab span'
+        ];
+
+        let tabs = [];
+        for (const sel of tabSelectors) {
+            tabs = Array.from(document.querySelectorAll(sel));
+            if (tabs.length > 0) break;
+        }
+
+        if (tabs.length === 0) {
+            return { found: false, noTabs: true, available: [] };
+        }
+
         const target = tabs.find(t =>
             t.innerText.trim().toLowerCase() === name.toLowerCase() ||
             t.innerText.trim().toLowerCase().includes(name.toLowerCase())
@@ -58,28 +82,81 @@ async function navigateToTab(page, tabName) {
         if (parent && parent.id && parent.id.startsWith('sheet-button-')) {
             gid = parent.id.replace('sheet-button-', '');
         }
+        // Try data attribute fallback
+        if (!gid && parent) {
+            const dataId = parent.getAttribute('data-id');
+            if (dataId) gid = dataId;
+        }
 
         return { found: true, gid, isActive, name: target.innerText.trim() };
     }, tabName);
 
     if (!result.found) {
-        console.warn(`[SHEETS] Tab "${tabName}" not found. Available: ${(result.available || []).join(', ')}`);
+        // Re-hide tabs
+        await page.evaluate(() => {
+            const b = document.querySelector('.grid-bottom-bar'); if (b) b.style.display = 'none';
+        });
+        if (result.noTabs) {
+            console.warn(`[SHEETS] No tab bar found at all.`);
+        } else {
+            console.warn(`[SHEETS] Tab "${tabName}" not found. Available: ${(result.available || []).join(', ')}`);
+        }
         return false;
     }
 
     if (result.isActive) {
         console.log(`[SHEETS] Tab "${result.name}" is already active.`);
+        await page.evaluate(() => {
+            const b = document.querySelector('.grid-bottom-bar'); if (b) b.style.display = 'none';
+        });
         return true;
     }
 
     if (result.gid) {
+        // Navigate by URL (most reliable)
         const url = new URL(page.url());
         url.hash = `gid=${result.gid}`;
         console.log(`[SHEETS] Switching to gid=${result.gid}`);
         await page.goto(url.toString(), { waitUntil: 'networkidle', timeout: 60000 });
+        await page.addStyleTag({ content: SHEETS_HIDE_CSS });
     } else {
-        // Fallback: search and click via text
-        await page.click(`.docs-sheet-tab-name:has-text("${result.name}")`);
+        // No gid available — click the tab via JavaScript (works even if visually hidden)
+        console.log(`[SHEETS] No gid found, clicking tab "${result.name}" via JS...`);
+        const clicked = await page.evaluate((name) => {
+            const tabSelectors = ['.docs-sheet-tab-name', '.docs-sheet-tab span'];
+            for (const sel of tabSelectors) {
+                const tabs = Array.from(document.querySelectorAll(sel));
+                const target = tabs.find(t =>
+                    t.innerText.trim().toLowerCase() === name.toLowerCase() ||
+                    t.innerText.trim().toLowerCase().includes(name.toLowerCase())
+                );
+                if (target) {
+                    // Click the parent tab container (which handles the tab switch)
+                    const parent = target.closest('.docs-sheet-tab') || target;
+                    parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                    parent.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                    parent.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                    return true;
+                }
+            }
+            return false;
+        }, result.name);
+
+        if (!clicked) {
+            console.warn(`[SHEETS] JS click failed for "${result.name}".`);
+            await page.evaluate(() => {
+                const b = document.querySelector('.grid-bottom-bar'); if (b) b.style.display = 'none';
+            });
+            return false;
+        }
+
+        // Wait for the sheet to load after the click
+        await page.waitForTimeout(4000);
+
+        // Re-hide tab bar and apply CSS
+        await page.evaluate(() => {
+            const b = document.querySelector('.grid-bottom-bar'); if (b) b.style.display = 'none';
+        });
     }
 
     await page.waitForTimeout(3000);

@@ -6,118 +6,182 @@ import { analyzeImage } from '../utils/openai.js';
 import sharp from 'sharp';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 
-export async function auditPageSpeedMobile(url, auditId) {
-    const psiUrl = `https://pagespeed.web.dev/analysis?url=${encodeURIComponent(url)}&form_factor=mobile`;
+// ── Shared helper: get score from Google API ──────────────────────────────────
+async function getScoreFromAPI(url, strategy) {
+    try {
+        const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance`;
+        console.log(`[MODULE-PSI] Fetching API score (${strategy})...`);
+        const apiRes = await fetch(apiUrl);
+        if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            const apiScore = apiData?.lighthouseResult?.categories?.performance?.score;
+            if (apiScore !== undefined && apiScore !== null) {
+                const score = Math.round(apiScore * 100);
+                console.log(`[MODULE-PSI] API Score (${strategy}): ${score}`);
+                return score;
+            }
+        }
+    } catch (e) {
+        console.log(`[MODULE-PSI] API score extraction failed (${strategy}): ${e.message}`);
+    }
+    return null;
+}
+
+// ── Shared helper: get score from DOM ─────────────────────────────────────────
+async function getScoreFromDOM(page) {
+    try {
+        const scores = await page.evaluate(() => {
+            const data = {};
+            // Try the main gauge
+            document.querySelectorAll('.lh-gauge').forEach(gauge => {
+                const label = gauge.querySelector('.lh-gauge__label')?.innerText?.toLowerCase();
+                const scoreText = gauge.querySelector('.lh-gauge__percentage')?.innerText;
+                if (label && scoreText) {
+                    const scoreNum = parseInt(scoreText.replace(/[^0-9]/g, ''), 10);
+                    data[label] = isNaN(scoreNum) ? null : scoreNum;
+                }
+            });
+            // Fallback: specific performance gauge
+            if (!data['performance'] && !data['performances']) {
+                const perfGauge = document.querySelector('.lh-gauge--performance .lh-gauge__percentage');
+                if (perfGauge) {
+                    data['performance'] = parseInt(perfGauge.innerText.replace(/[^0-9]/g, ''), 10);
+                }
+            }
+            return data;
+        });
+        return scores['performance'] ?? scores['performances'] ?? null;
+    } catch {
+        return null;
+    }
+}
+
+// ── Shared helper: dismiss cookie banners ─────────────────────────────────────
+async function dismissCookies(page) {
+    try {
+        const cookieSelectors = ['#L2AGLb', "button:has-text('Ok, Got it')", "button:has-text('Ok, j\\'accepte')", "button:has-text('Tout accepter')"];
+        for (const sel of cookieSelectors) {
+            const btn = await page.$(sel);
+            if (btn) {
+                await btn.click();
+                await page.waitForTimeout(1000);
+                break;
+            }
+        }
+    } catch { }
+}
+
+// ── Core audit function (shared for both mobile and desktop) ──────────────────
+async function auditPageSpeed(url, auditId, strategy) {
+    const label = strategy === 'mobile' ? 'MOBILE' : 'DESKTOP';
+    const formFactor = strategy === 'mobile' ? 'mobile' : 'desktop';
+    const psiUrl = `https://pagespeed.web.dev/analysis?url=${encodeURIComponent(url)}&form_factor=${formFactor}`;
 
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
-        viewport: { width: 1280, height: 900 },
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        viewport: { width: 1400, height: 900 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     });
     const page = await context.newPage();
 
-    let result = {
-        statut: 'FAILED',
-        capture: null,
-        score: null,
-        details: null
-    };
+    let result = { statut: 'FAILED', capture: null, score: null, details: null };
 
     try {
-        console.log(`[MODULE-PSI] Starting MOBILE audit for ${url}...`);
-        await page.goto(psiUrl, { waitUntil: 'networkidle', timeout: 90000 });
+        console.log(`[MODULE-PSI] Starting ${label} audit for ${url}...`);
 
-        console.log(`[MODULE-PSI] Waiting for analysis results (mobile)...`);
+        // Step 1: Get score from API first (most reliable, doesn't need page to load)
+        result.score = await getScoreFromAPI(url, strategy);
+
+        // Step 2: Navigate to PSI page for the screenshot
+        await page.goto(psiUrl, { waitUntil: 'networkidle', timeout: 90000 });
+        console.log(`[MODULE-PSI] Waiting for analysis results (${label})...`);
+
         try {
-            await page.waitForSelector('.lh-gauge__percentage', { timeout: 90000 });
+            await page.waitForSelector('.lh-gauge__percentage', { timeout: 120000 });
+            console.log(`[MODULE-PSI] Gauge appeared (${label}).`);
         } catch (e) {
-            console.log(`[MODULE-PSI] Timeout waiting for gauge.`);
+            console.log(`[MODULE-PSI] Timeout waiting for gauge (${label}). Continuing with what we have...`);
         }
 
         await page.waitForTimeout(5000);
 
-        let domScore = null;
-        try {
-            const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&category=performance`;
-            const apiRes = await fetch(apiUrl);
-            if (apiRes.ok) {
-                const apiData = await apiRes.json();
-                const apiScore = apiData?.lighthouseResult?.categories?.performance?.score;
-                if (apiScore !== undefined && apiScore !== null) {
-                    domScore = Math.round(apiScore * 100);
-                    console.log(`[MODULE-PSI] API Score extracted (mobile): ${domScore}`);
-                }
+        // Step 3: If API score failed, try DOM
+        if (result.score === null) {
+            result.score = await getScoreFromDOM(page);
+            if (result.score !== null) {
+                console.log(`[MODULE-PSI] DOM Score extracted (${label}): ${result.score}`);
+            } else {
+                console.log(`[MODULE-PSI] ⚠️ No score found via API or DOM (${label}).`);
             }
-        } catch (e) {
-            console.log(`[MODULE-PSI] API score extraction failed: ${e.message}`);
         }
 
-        if (domScore === null) {
-            const scores = await page.evaluate(() => {
-                const data = {};
-                document.querySelectorAll('.lh-gauge').forEach(gauge => {
-                    const label = gauge.querySelector('.lh-gauge__label')?.innerText?.toLowerCase();
-                    const scoreText = gauge.querySelector('.lh-gauge__percentage')?.innerText;
-                    if (label && scoreText) {
-                        const scoreNum = parseInt(scoreText.replace(/[^0-9]/g, ''), 10);
-                        data[label] = isNaN(scoreNum) ? null : scoreNum;
-                    }
-                });
-                if (!data['performance'] && !data['performances']) {
-                    const perfGauge = document.querySelector('.lh-gauge--performance .lh-gauge__percentage');
-                    if (perfGauge) {
-                        data['performance'] = parseInt(perfGauge.innerText.replace(/[^0-9]/g, ''), 10);
-                    }
-                }
-                return data;
-            });
-            domScore = scores['performance'] ?? scores['performances'] ?? null;
-            console.log(`[MODULE-PSI] DOM Score extracted (mobile): ${domScore}`);
+        // Step 4: Dismiss cookie banners
+        await dismissCookies(page);
+
+        // Step 5: Scroll to the "Analysez les problèmes de performances" / performance metrics section
+        // and take screenshot of the full performance category
+        await page.waitForTimeout(2000);
+
+        // Take a full page screenshot first
+        const fullPath = path.resolve(`temp_psi_full_${strategy}_${uuidv4()}.png`);
+
+        // Try to capture the .lh-category section which contains the performance metrics
+        try {
+            const perfSection = page.locator('.lh-category >> visible=true').first();
+            await perfSection.waitFor({ state: 'visible', timeout: 30000 });
+            await perfSection.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(2000);
+            await perfSection.screenshot({ path: fullPath });
+        } catch {
+            // Fallback: full viewport screenshot
+            console.log(`[MODULE-PSI] Fallback to viewport screenshot (${label})`);
+            await page.screenshot({ path: fullPath, fullPage: false });
         }
 
-        result.score = domScore;
+        // Step 6: Use AI to crop precisely — this gives the best results
+        const cropPrompt = `Cette image est une capture de PageSpeed Insights (Google) en mode ${label}.
+Tu dois rogner pour ne garder QUE la section "Analysez les problèmes de performances" (ou "Diagnose performance issues").
+Cette section contient :
+- Le grand cercle coloré avec le score de performance (le gros chiffre au centre)
+- Les métriques en dessous : First Contentful Paint, Largest Contentful Paint, Total Blocking Time, Cumulative Layout Shift, Speed Index
+NE PAS inclure : la barre d'URL en haut, les onglets Mobile/Desktop, la partie "Statistiques" ou "Treemap" en bas.
+Rogne au millimètre.
+CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
-        try {
-            const cookieSelectors = ['#L2AGLb', "button:has-text('Ok, Got it')", "button:has-text('Ok, j\\'accepte')", "button:has-text('Tout accepter')"];
-            for (const sel of cookieSelectors) {
-                const btn = await page.$(sel);
-                if (btn) {
-                    await btn.click();
-                    await page.waitForTimeout(1000);
-                    break;
-                }
+        const rawUrl = await uploadToCloudinary(fullPath, `audit-temp/psi-raw-${strategy}-${auditId}`);
+        const aiRes = await analyzeImage(rawUrl, cropPrompt);
+        const match = aiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
+
+        let finalUrl;
+        if (match) {
+            let [, cx, cy, cw, ch] = match.map(Number);
+            const meta = await sharp(fullPath).metadata();
+            cx = Math.max(0, Math.min(cx, meta.width - 10));
+            cy = Math.max(0, Math.min(cy, meta.height - 10));
+            cw = Math.min(cw, meta.width - cx);
+            ch = Math.min(ch, meta.height - cy);
+
+            if (cw > 50 && ch > 50) {
+                const croppedPath = fullPath.replace('.png', '_cropped.png');
+                await sharp(fullPath).extract({ left: cx, top: cy, width: cw, height: ch }).toFile(croppedPath);
+                finalUrl = await uploadToCloudinary(croppedPath, `audit-results/psi-${strategy}-${auditId}`);
+                if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
+            } else {
+                finalUrl = rawUrl;
             }
-        } catch (e) { }
+        } else {
+            // Fallback: use the raw capture
+            finalUrl = rawUrl;
+        }
 
-        const fullPath = path.resolve(`temp_psi_full_mobile.png`);
-        const perfSection = page.locator('.lh-category >> visible=true').first();
-        await perfSection.waitFor({ state: 'visible', timeout: 60000 });
-        await perfSection.scrollIntoViewIfNeeded();
-        await page.waitForTimeout(1000);
-        await perfSection.screenshot({ path: fullPath });
-
-        const metadata = await sharp(fullPath).metadata();
-        let { width: w, height: h } = metadata;
-        const croppedPath = path.resolve(`temp_psi_crop_mobile_${uuidv4()}.png`);
-
-        h = Math.floor(h * 0.50);
-        const T = Math.floor(h * 0.10);
-        const R = Math.floor(w * 0.10);
-        const B = Math.floor(h * 0.58);
-        const cropH = h - B - T;
-        const cropW = w - R;
-        await sharp(fullPath)
-            .extract({ left: 0, top: T, width: cropW, height: cropH })
-            .toFile(croppedPath);
-
-        const cloudRes = await uploadToCloudinary(croppedPath, `audit-results/psi-mobile-${auditId}`);
-        result.capture = cloudRes;
+        result.capture = finalUrl;
         result.statut = 'SUCCESS';
 
-        if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
+        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
 
     } catch (e) {
-        console.error(`[MODULE-PSI] Mobile FATAL:`, e.message);
+        console.error(`[MODULE-PSI] ${label} FATAL:`, e.message);
+        result.details = e.message;
     } finally {
         await browser.close();
     }
@@ -125,128 +189,11 @@ export async function auditPageSpeedMobile(url, auditId) {
     return result;
 }
 
+// ── Exports ───────────────────────────────────────────────────────────────────
+export async function auditPageSpeedMobile(url, auditId) {
+    return auditPageSpeed(url, auditId, 'mobile');
+}
+
 export async function auditPageSpeedDesktop(url, auditId) {
-    const psiUrl = `https://pagespeed.web.dev/analysis?url=${encodeURIComponent(url)}&form_factor=desktop`;
-
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-        viewport: { width: 1280, height: 900 },
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    });
-    const page = await context.newPage();
-
-    let result = {
-        statut: 'FAILED',
-        capture: null,
-        score: null,
-        details: null
-    };
-
-    try {
-        console.log(`[MODULE-PSI] Starting DESKTOP audit for ${url}...`);
-        await page.goto(psiUrl, { waitUntil: 'networkidle', timeout: 90000 });
-
-        console.log(`[MODULE-PSI] Waiting for analysis results (desktop)...`);
-        try {
-            await page.waitForSelector('.lh-gauge__percentage', { timeout: 90000 });
-        } catch (e) {
-            console.log(`[MODULE-PSI] Timeout waiting for gauge.`);
-        }
-
-        await page.waitForTimeout(5000);
-
-        let domScore = null;
-        try {
-            const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=desktop&category=performance`;
-            const apiRes = await fetch(apiUrl);
-            if (apiRes.ok) {
-                const apiData = await apiRes.json();
-                const apiScore = apiData?.lighthouseResult?.categories?.performance?.score;
-                if (apiScore !== undefined && apiScore !== null) {
-                    domScore = Math.round(apiScore * 100);
-                    console.log(`[MODULE-PSI] API Score extracted (desktop): ${domScore}`);
-                }
-            }
-        } catch (e) {
-            console.log(`[MODULE-PSI] API score extraction failed: ${e.message}`);
-        }
-
-        if (domScore === null) {
-            const scores = await page.evaluate(() => {
-                const data = {};
-                document.querySelectorAll('.lh-gauge').forEach(gauge => {
-                    const label = gauge.querySelector('.lh-gauge__label')?.innerText?.toLowerCase();
-                    const scoreText = gauge.querySelector('.lh-gauge__percentage')?.innerText;
-                    if (label && scoreText) {
-                        const scoreNum = parseInt(scoreText.replace(/[^0-9]/g, ''), 10);
-                        data[label] = isNaN(scoreNum) ? null : scoreNum;
-                    }
-                });
-                if (!data['performance'] && !data['performances']) {
-                    const perfGauge = document.querySelector('.lh-gauge--performance .lh-gauge__percentage');
-                    if (perfGauge) {
-                        data['performance'] = parseInt(perfGauge.innerText.replace(/[^0-9]/g, ''), 10);
-                    }
-                }
-                return data;
-            });
-            domScore = scores['performance'] ?? scores['performances'] ?? null;
-            console.log(`[MODULE-PSI] DOM Score extracted (desktop): ${domScore}`);
-        }
-
-        result.score = domScore;
-
-        try {
-            const cookieSelectors = ['#L2AGLb', "button:has-text('Ok, Got it')", "button:has-text('Ok, j\\'accepte')", "button:has-text('Tout accepter')"];
-            for (const sel of cookieSelectors) {
-                const btn = await page.$(sel);
-                if (btn) {
-                    await btn.click();
-                    await page.waitForTimeout(1000);
-                    break;
-                }
-            }
-        } catch (e) { }
-
-        try {
-            const desktopTab = await page.locator('button:has-text("Bureau"), button:has-text("Desktop")').first();
-            await desktopTab.click();
-            await page.waitForTimeout(3000);
-        } catch (e) { }
-
-        const fullPath = path.resolve(`temp_psi_full_desktop.png`);
-        const perfSection = page.locator('.lh-category >> visible=true').first();
-        await perfSection.waitFor({ state: 'visible', timeout: 60000 });
-        await perfSection.scrollIntoViewIfNeeded();
-        await page.waitForTimeout(1000);
-        await perfSection.screenshot({ path: fullPath });
-
-        const metadata = await sharp(fullPath).metadata();
-        let { width: w, height: h } = metadata;
-        const croppedPath = path.resolve(`temp_psi_crop_desktop_${uuidv4()}.png`);
-
-        h = Math.floor(h * 0.50);
-        const T = Math.floor(h * 0.34);
-        const L = Math.floor(w * 0.10);
-        const R = Math.floor(w * 0.20);
-        const B = Math.floor(h * 0.20);
-        const cropW = w - L - R;
-        const cropH = h - T - B;
-        await sharp(fullPath)
-            .extract({ left: L, top: T, width: cropW, height: cropH })
-            .toFile(croppedPath);
-
-        const cloudRes = await uploadToCloudinary(croppedPath, `audit-results/psi-desktop-${auditId}`);
-        result.capture = cloudRes;
-        result.statut = 'SUCCESS';
-
-        if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
-
-    } catch (e) {
-        console.error(`[MODULE-PSI] Desktop FATAL:`, e.message);
-    } finally {
-        await browser.close();
-    }
-
-    return result;
+    return auditPageSpeed(url, auditId, 'desktop');
 }
