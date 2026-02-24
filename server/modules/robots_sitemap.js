@@ -79,16 +79,26 @@ export async function auditRobotsSitemap(url, auditId) {
             const robotsRawUrl = await uploadBufferToCloudinary(robotsViewportBuffer, `robots-raw-${auditId}.png`, 'audit-temp');
 
             const robotsPrompt = sitemapInfo
-                ? "Locate the 'Sitemap:' line and surrounding text. IMPORTANT: Trim all empty white space on the right side. The width MUST be narrow, matching only the text. Return CROP: x=0, y=[top], width=[content_width], height=[content_height]. Aim for 10 lines of context."
+                ? "Scan the image to find the exact location of the 'Sitemap:' declaration(s). Give coordinates to crop ONLY the 'Sitemap:' line(s) and a little bit of surrounding context (2 lines above). IMPORTANT: Trim all empty white space on the right side. Return CROP: x=0, y=[y_coord_of_sitemap_block], width=[narrow_text_width], height=[height_of_sitemap_block]."
                 : "Capture the robots.txt rules. IMPORTANT: Trim all empty white space on the right side. The width MUST be very narrow, matching only the text lines. Return CROP: x=0, y=0, width=[content_width], height=[content_height]";
 
             const robotsAiRes = await analyzeImage(robotsRawUrl, robotsPrompt);
             const rMatch = robotsAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
 
             if (rMatch) {
-                const [_, rx, ry, rw, rh] = rMatch.map(Number);
-                const robotsFinalBuffer = await sharp(robotsViewportBuffer).extract({ left: rx, top: ry, width: rw, height: rh }).toBuffer();
-                robotsResult.robots_txt.capture = await uploadBufferToCloudinary(robotsFinalBuffer, `robots-final-${auditId}.png`, 'audit-captures');
+                let [_, rx, ry, rw, rh] = rMatch.map(Number);
+                const rMeta = await sharp(robotsViewportBuffer).metadata();
+                rx = Math.max(0, rx);
+                ry = Math.max(0, ry);
+                rw = Math.min(rw, rMeta.width - rx);
+                rh = Math.min(rh, rMeta.height - ry);
+
+                if (rw > 0 && rh > 0) {
+                    const robotsFinalBuffer = await sharp(robotsViewportBuffer).extract({ left: rx, top: ry, width: rw, height: rh }).toBuffer();
+                    robotsResult.robots_txt.capture = await uploadBufferToCloudinary(robotsFinalBuffer, `robots-final-${auditId}.png`, 'audit-captures');
+                } else {
+                    robotsResult.robots_txt.capture = robotsRawUrl;
+                }
             } else {
                 robotsResult.robots_txt.capture = robotsRawUrl;
             }
@@ -109,10 +119,21 @@ export async function auditRobotsSitemap(url, auditId) {
                 const sMatch = sitemapAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
 
                 if (sMatch) {
-                    const [_, sx, sy, sw, sh] = sMatch.map(Number);
-                    const sitemapFinalBuffer = await sharp(sitemapViewportBuffer).extract({ left: sx, top: sy, width: sw, height: sh }).toBuffer();
-                    robotsResult.sitemap.capture = await uploadBufferToCloudinary(sitemapFinalBuffer, `sitemap-final-${auditId}.png`, 'audit-captures');
-                    robotsResult.sitemap.statut = 'SUCCESS';
+                    let [_, sx, sy, sw, sh] = sMatch.map(Number);
+                    const sMeta = await sharp(sitemapViewportBuffer).metadata();
+                    sx = Math.max(0, sx);
+                    sy = Math.max(0, sy);
+                    sw = Math.min(sw, sMeta.width - sx);
+                    sh = Math.min(sh, sMeta.height - sy);
+
+                    if (sw > 0 && sh > 0) {
+                        const sitemapFinalBuffer = await sharp(sitemapViewportBuffer).extract({ left: sx, top: sy, width: sw, height: sh }).toBuffer();
+                        robotsResult.sitemap.capture = await uploadBufferToCloudinary(sitemapFinalBuffer, `sitemap-final-${auditId}.png`, 'audit-captures');
+                        robotsResult.sitemap.statut = 'SUCCESS';
+                    } else {
+                        robotsResult.sitemap.capture = sitemapRawUrl;
+                        robotsResult.sitemap.statut = 'SUCCESS';
+                    }
                 } else {
                     robotsResult.sitemap.capture = sitemapRawUrl;
                     robotsResult.sitemap.statut = 'SUCCESS';

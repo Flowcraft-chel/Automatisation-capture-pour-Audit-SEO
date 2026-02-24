@@ -77,30 +77,42 @@ export async function auditPageSpeed(url, auditId, strategy = 'mobile') {
 
         // AI-Driven Precision Crop for "Opportunities" or "Recommendations"
         console.log(`[MODULE-PSI] Coordinating with AI for ${strategy} recommendations crop...`);
-        const cropPrompt = `Locate the section titled "Analysez les problèmes de performances" (or "Opportunities/Diagnostics"). The crop MUST start at this title and end just before the "Statistiques" title. IMPORTANT: TRUNCATE ALL EMPTY WHITE SPACE ON THE RIGHT SIDE. The width MUST be narrow, matching exactly the cards/list. Return CROP: x=[left], y=[top], width=[narrow_content_width], height=[total_height].`;
+        const cropPrompt = `Locate the core performance summary section. The crop MUST start ABOVE the 4 small circular category gauges ("Performances", "Accessibilité", "Bonnes pratiques", "SEO"). It MUST include these 4 small gauges at the top, the large main "Performances" gauge below them, and the mobile/desktop screenshot thumbnail on the right side. The crop MUST END just below the "Performances" scale (the red/orange/green triangles with 0-49, 50-89, 90-100). Do NOT include the "Analysez les problèmes de performances" list section. Return CROP: x=[left], y=[top], width=[content_width], height=[total_height].`;
 
         const cropCoords = await analyzeImage(fullPath, cropPrompt);
 
         if (cropCoords && cropCoords.includes('CROP:')) {
             const match = cropCoords.match(/x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/);
             if (match) {
-                const [_, x, y, width, height] = match.map(Number);
+                let [_, x, y, width, height] = match.map(Number);
                 const croppedPath = path.resolve(`temp_psi_crop_${strategy}_${uuidv4()}.png`);
 
-                await sharp(fullPath)
-                    .extract({ left: x, top: y, width, height })
-                    .toFile(croppedPath);
+                const metadata = await sharp(fullPath).metadata();
+                // Ensure bounds
+                x = Math.max(0, x);
+                y = Math.max(0, y);
+                width = Math.min(width, metadata.width - x);
+                height = Math.min(height, metadata.height - y);
 
-                console.log(`[MODULE-PSI] Uploading ${strategy} capture to Cloudinary...`);
-                const cloudRes = await uploadToCloudinary(croppedPath, `audit-results/psi-${strategy}-${auditId}`);
-                result.capture = cloudRes.secure_url;
-                result.statut = 'SUCCESS';
+                if (width > 0 && height > 0) {
+                    await sharp(fullPath)
+                        .extract({ left: x, top: y, width, height })
+                        .toFile(croppedPath);
 
-                if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
+                    console.log(`[MODULE-PSI] Uploading ${strategy} capture to Cloudinary...`);
+                    const cloudRes = await uploadToCloudinary(croppedPath, `audit-results/psi-${strategy}-${auditId}`);
+                    result.capture = cloudRes;
+                    result.statut = 'SUCCESS';
+
+                    if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
+                } else {
+                    console.log(`[MODULE-PSI] AI returned invalid bounds: ${x},${y},${width},${height}`);
+                    throw new Error("Invalid crop bounds");
+                }
             }
         } else {
             const cloudRes = await uploadToCloudinary(fullPath, `audit-results/psi-full-${strategy}-${auditId}`);
-            result.capture = cloudRes.secure_url;
+            result.capture = cloudRes;
             result.statut = 'SUCCESS_FULLPAGE';
         }
 

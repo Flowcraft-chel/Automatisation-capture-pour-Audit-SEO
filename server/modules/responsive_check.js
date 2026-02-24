@@ -87,7 +87,7 @@ export async function auditResponsive(url, auditId) {
         console.log('[MODULE-RESPONSIVE] Uploading to Cloudinary...');
         const cloudRes = await uploadToCloudinary(screenshotPath, `audit-results/responsive-${auditId}`);
 
-        result.capture = cloudRes.secure_url;
+        result.capture = cloudRes;
         result.statut = 'SUCCESS';
         result.is_responsive = !iframeError;
 
