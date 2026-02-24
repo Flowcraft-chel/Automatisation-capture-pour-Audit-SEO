@@ -207,11 +207,9 @@ export const initWorker = (io, db) => {
                 for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title']) {
                     await updateStep(k, 'SKIP', 'Lien Google Sheet non fourni');
                 }
-            } else if (!googleCookies) {
-                for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title']) {
-                    await updateStep(k, 'SKIP', 'Session Google non connectée — aller dans Paramètres');
-                }
             } else {
+                // Google Sheets are shared with editor rights (public link), cookies are optional
+                if (!googleCookies) console.log(`[WORKER] [JOB ${job.id}] No Google cookies, opening sheets as public viewer.`);
                 // 7a. Images
                 await updateStep('sheet_images', 'EN_COURS');
                 const imgRes = await captureSheetImages(sheetAuditUrl, auditId, googleCookies);
@@ -273,9 +271,9 @@ export const initWorker = (io, db) => {
 
             // STEP 8: Google Sheets — Plan d'action
             const sheetPlanUrl = audit.sheet_plan_url;
-            if (!sheetPlanUrl || !googleCookies) {
+            if (!sheetPlanUrl) {
                 for (const k of ['plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur']) {
-                    await updateStep(k, 'SKIP', !sheetPlanUrl ? "Lien Plan d'action non fourni" : 'Session Google non connect\u00e9e');
+                    await updateStep(k, 'SKIP', "Lien Plan d'action non fourni");
                 }
             } else {
                 const planTabs = [
