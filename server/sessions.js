@@ -27,9 +27,14 @@ export async function captureSession(service, userId) {
     try {
         console.log(`[SESSION] Tentative de lancement Chromium pour ${service}...`);
 
+        const isProduction = process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT;
+        if (isProduction) {
+            throw new Error("L'authentification (Google, MRM, Ubersuggest) ne peut pas être effectuée sur un serveur distant (Railway) car elle nécessite une fenêtre visible pour taper vos identifiants. Vous devez lancer le projet en local (npm run dev) pour enregistrer vos sessions.");
+        }
+
         // Ensure atomic launch
         context = await chromium.launchPersistentContext(userSessionDir, {
-            headless: true, // Switched to true for Railway compatibility
+            headless: false, // MUST be false to allow human login
             viewport: { width: 1280, height: 720 },
             args: [
                 '--no-sandbox',
