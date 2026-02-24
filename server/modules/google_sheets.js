@@ -40,7 +40,9 @@ async function cropWithAI(imagePath, prompt) {
 
 // ── Navigate to a sheet and select a specific tab by name ────────────────────
 async function navigateToTab(page, tabName) {
-    await page.waitForTimeout(3000);
+    console.log(`[SHEETS] Navigating to tab: "${tabName}"`);
+    await page.waitForTimeout(2000);
+
     const result = await page.evaluate((name) => {
         const tabs = Array.from(document.querySelectorAll('.docs-sheet-tab-name'));
         const target = tabs.find(t =>
@@ -48,13 +50,16 @@ async function navigateToTab(page, tabName) {
             t.innerText.trim().toLowerCase().includes(name.toLowerCase())
         );
         if (!target) return { found: false, available: tabs.map(t => t.innerText.trim()) };
-        const parent = target.closest('.docs-sheet-tab') || target;
-        const rect = parent.getBoundingClientRect();
+
+        const parent = target.closest('.docs-sheet-tab');
+        const isActive = parent && parent.classList.contains('docs-sheet-active-tab');
+
         let gid = null;
-        if (parent.id && parent.id.startsWith('sheet-button-')) {
+        if (parent && parent.id && parent.id.startsWith('sheet-button-')) {
             gid = parent.id.replace('sheet-button-', '');
         }
-        return { found: true, gid, box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
+
+        return { found: true, gid, isActive, name: target.innerText.trim() };
     }, tabName);
 
     if (!result.found) {
@@ -62,13 +67,22 @@ async function navigateToTab(page, tabName) {
         return false;
     }
 
-    if (result.gid) {
-        const baseUrl = page.url().split('#')[0];
-        await page.goto(`${baseUrl}#gid=${result.gid}`, { waitUntil: 'networkidle', timeout: 60000 });
-    } else if (result.box) {
-        await page.mouse.click(result.box.x + result.box.width / 2, result.box.y + result.box.height / 2);
+    if (result.isActive) {
+        console.log(`[SHEETS] Tab "${result.name}" is already active.`);
+        return true;
     }
-    await page.waitForTimeout(4000);
+
+    if (result.gid) {
+        const url = new URL(page.url());
+        url.hash = `gid=${result.gid}`;
+        console.log(`[SHEETS] Switching to gid=${result.gid}`);
+        await page.goto(url.toString(), { waitUntil: 'networkidle', timeout: 60000 });
+    } else {
+        // Fallback: search and click via text
+        await page.click(`.docs-sheet-tab-name:has-text("${result.name}")`);
+    }
+
+    await page.waitForTimeout(3000);
     return true;
 }
 
@@ -154,22 +168,15 @@ export async function captureSheetImages(sheetUrl, auditId, googleCookies) {
             dataRows.sort((a, b) => parseFloat(b.dataset.val || 0) - parseFloat(a.dataset.val || 0));
             dataRows.forEach(tr => tbody.appendChild(tr));
 
-            // Keep only Destination + Taille columns
+            // Keep only Destination + Taille columns (non-destructive)
             const keepIdx = [0, tailleIdx];
             Array.from(document.querySelectorAll('.waffle tr')).forEach((tr, i) => {
-                if (i === 0) {
-                    const colGroup = document.querySelector('.waffle colgroup');
-                    if (colGroup) {
-                        const cols = Array.from(colGroup.children);
-                        const keep = keepIdx.map(k => cols[k]).filter(Boolean);
-                        colGroup.innerHTML = '';
-                        keep.forEach(c => colGroup.appendChild(c));
-                    }
-                }
                 const cells = Array.from(tr.children);
-                const keep = keepIdx.map(k => cells[k]).filter(Boolean);
-                tr.innerHTML = '';
-                keep.forEach(c => tr.appendChild(c));
+                cells.forEach((td, idx) => {
+                    if (!keepIdx.includes(idx)) {
+                        td.style.display = 'none';
+                    }
+                });
             });
         });
         await page.waitForTimeout(1000);
@@ -219,8 +226,11 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
         ];
 
         for (const { col, field, sort } of columns) {
-            // Reset by re-navigating to tab
-            await navigateToTab(page, 'Balises H1-H6');
+            // RELOAD to ensure clean state before each column capture
+            await page.reload({ waitUntil: 'networkidle', timeout: 60000 });
+            await page.addStyleTag({ content: SHEETS_HIDE_CSS });
+            const tabOk = await navigateToTab(page, 'Balises H1-H6');
+            if (!tabOk) continue;
 
             const hasRelevantData = await page.evaluate(({ colName }) => {
                 const rows = Array.from(document.querySelectorAll('.waffle tr'));
@@ -274,27 +284,19 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
                 if (sortDir === 'desc') {
                     dataRows.sort((a, b) => parseFloat(b.dataset.val) - parseFloat(a.dataset.val));
                 } else {
-                    // For asc 'oui', bring 'oui' to top
                     dataRows.sort((a, b) => parseInt(b.dataset.textVal) - parseInt(a.dataset.textVal));
                 }
                 dataRows.forEach(tr => tbody.appendChild(tr));
 
-                // Keep only URL + target column
+                // Hide columns instead of deleting them (non-destructive)
                 const keepIdx = [0, colIdx];
-                Array.from(document.querySelectorAll('.waffle tr')).forEach((tr, i) => {
-                    if (i === 0) {
-                        const colGroup = document.querySelector('.waffle colgroup');
-                        if (colGroup) {
-                            const cols = Array.from(colGroup.children);
-                            const keep = keepIdx.map(k => cols[k]).filter(Boolean);
-                            colGroup.innerHTML = '';
-                            keep.forEach(c => colGroup.appendChild(c));
-                        }
-                    }
+                Array.from(document.querySelectorAll('.waffle tr')).forEach((tr) => {
                     const cells = Array.from(tr.children);
-                    const keep = keepIdx.map(k => cells[k]).filter(Boolean);
-                    tr.innerHTML = '';
-                    keep.forEach(c => tr.appendChild(c));
+                    cells.forEach((td, idx) => {
+                        if (!keepIdx.includes(idx)) {
+                            td.style.display = 'none';
+                        }
+                    });
                 });
             }, { colName: col, sortDir: sort });
 
