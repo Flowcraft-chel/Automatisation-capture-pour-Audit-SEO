@@ -75,16 +75,33 @@ export async function auditPageSpeed(url, auditId, strategy = 'mobile') {
         const fullPath = path.resolve(`temp_psi_full_${strategy}.png`);
         await page.screenshot({ path: fullPath, fullPage: true });
 
-        // AI-Driven Precision Crop for "Opportunities" or "Recommendations"
-        console.log(`[MODULE-PSI] Coordinating with AI for ${strategy} recommendations crop...`);
-        const cropPrompt = `Locate the core performance summary section. The crop MUST start ABOVE the 4 small circular category gauges ("Performances", "Accessibilité", "Bonnes pratiques", "SEO"). It MUST include these 4 small gauges at the top, the large main "Performances" gauge below them, and the mobile/desktop screenshot thumbnail on the right side. The crop MUST END just below the "Performances" scale (the red/orange/green triangles with 0-49, 50-89, 90-100). Do NOT include the "Analysez les problèmes de performances" list section. Return CROP: x=[left], y=[top], width=[content_width], height=[total_height].`;
+        // Wait exactly 2 seconds to guarantee the screenshot is fully written to disk before AI Base64 encoding
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
-        const cropCoords = await analyzeImage(fullPath, cropPrompt);
+        // AI-Driven Precision Crop and Score Extraction
+        console.log(`[MODULE-PSI] Coordinating with AI for ${strategy} recommendations crop and score...`);
+        const cropPrompt = `
+        TASK 1 (CROP): Locate the core performance summary section. The crop MUST start ABOVE the 4 small circular category gauges ("Performances", "Accessibilité", "Bonnes pratiques", "SEO"). It MUST include these 4 small gauges at the top, the large main "Performances" gauge below them, and the mobile/desktop screenshot thumbnail on the right side. The crop MUST END just below the "Performances" scale (the red/orange/green triangles with 0-49, 50-89, 90-100). Do NOT include the "Analysez les problèmes de performances" list section. Return CROP: x=[left], y=[top], width=[content_width], height=[total_height].
+        TASK 2 (SCORE): Look at the main "Performances" gauge (the largest circle, usually green, orange, or red with a number). What is the exact number inside that main circle? Return SCORE: [number between 0 and 100].
+        Return both tasks on separate lines.
+        `;
 
-        if (cropCoords && cropCoords.includes('CROP:')) {
-            const match = cropCoords.match(/x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/);
-            if (match) {
-                let [_, x, y, width, height] = match.map(Number);
+        const aiResponse = await analyzeImage(fullPath, cropPrompt);
+
+        if (aiResponse) {
+            console.log(`[MODULE-PSI] RAW AI RESPONSE:`, aiResponse);
+
+            // Parse Score
+            const scoreMatch = aiResponse.match(/SCORE\):\s*(\d{1,3})/i) || aiResponse.match(/SCORE:\s*(\d{1,3})/i);
+            if (scoreMatch) {
+                result.score = parseInt(scoreMatch[1], 10);
+                console.log(`[MODULE-PSI] AI Extracted Score: ${result.score}`);
+            }
+
+            // Parse Crop
+            const cropMatch = aiResponse.match(/CROP\):[^\d]*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i) || aiResponse.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
+            if (cropMatch) {
+                let [_, x, y, width, height] = cropMatch.map(Number);
                 const croppedPath = path.resolve(`temp_psi_crop_${strategy}_${uuidv4()}.png`);
 
                 const metadata = await sharp(fullPath).metadata();

@@ -6,7 +6,7 @@ async function registerV4() {
         const res = await axios.post('https://api.ssllabs.com/api/v4/register', {
             firstName: "Novek",
             lastName: "Admin",
-            email: "contact@novek.fr",
+            email: "contact@novekai.agency", // REQUIRED for v4
             organization: "Novek"
         });
         console.log("Success:", res.data);

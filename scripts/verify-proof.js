@@ -26,7 +26,12 @@ async function verifyFinal(domainToTest) {
         // 1. Robots & Sitemap
         console.log('[VERIF] 1/5 Robots & Sitemap...');
         const robotsRes = await auditRobotsSitemap(siteUrl, auditId);
+        if (robotsRes.robots_txt.url) await updateAirtableField(airtableId, 'robot', robotsRes.robots_txt.url);
         if (robotsRes.robots_txt.capture) await updateAirtableField(airtableId, 'Img_Robots_Txt', robotsRes.robots_txt.capture);
+
+        if (robotsRes.sitemap.url) await updateAirtableField(airtableId, 'sitemaps', robotsRes.sitemap.url);
+        else await updateAirtableField(airtableId, 'sitemaps', "Le fichier sitemaps n'existe pas");
+
         if (robotsRes.sitemap.capture) await updateAirtableField(airtableId, 'Img_Sitemap', robotsRes.sitemap.capture);
 
         // 2. Logo
@@ -45,9 +50,16 @@ async function verifyFinal(domainToTest) {
         if (respRes.capture) await updateAirtableField(airtableId, 'Img_AmIResponsive', respRes.capture);
 
         // 5. PageSpeed Mobile
-        console.log('[VERIF] 5/5 PSI (AI Precise Crop)...');
+        console.log('[VERIF] 5/6 PSI Mobile (AI Precise Crop & Score)...');
         const psiM = await auditPageSpeed(siteUrl, auditId, 'mobile');
         if (psiM.capture) await updateAirtableField(airtableId, 'Img_PSI_Mobile', psiM.capture);
+        if (psiM.score) await updateAirtableField(airtableId, 'pourcentage smartphone', psiM.score / 100);
+
+        // 6. PageSpeed Desktop
+        console.log('[VERIF] 6/6 PSI Desktop (AI Precise Crop & Score)...');
+        const psiD = await auditPageSpeed(siteUrl, auditId, 'desktop');
+        if (psiD.capture) await updateAirtableField(airtableId, 'Img_PSI_Desktop', psiD.capture);
+        if (psiD.score) await updateAirtableField(airtableId, 'pourcentage desktop', psiD.score / 100);
 
         await updateAirtableStatut(airtableId, 'fait');
         console.log(`--- PROOF COMPLETE FOR ${domainToTest} ---`);
