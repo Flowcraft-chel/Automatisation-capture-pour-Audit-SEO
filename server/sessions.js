@@ -57,9 +57,9 @@ export async function captureSession(service, userId) {
                 return s.includes('myaccount.google.com') || s.includes('google.com/search') || s.includes('mail.google.com') || s.includes('drive.google.com');
             }, { timeout: 300000 });
         } else if (service === 'ubersuggest') {
-            await page.waitForURL(url => url.includes('/dashboard'), { timeout: 300000 });
+            await page.waitForURL(url => url.toString().includes('/dashboard'), { timeout: 300000 });
         } else {
-            await page.waitForURL(url => !url.includes('login'), { timeout: 300000 });
+            await page.waitForURL(url => !url.toString().includes('login'), { timeout: 300000 });
         }
 
         console.log(`[SESSION] Connexion détectée ! Finalisation...`);

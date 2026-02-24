@@ -406,7 +406,8 @@ created_at (TIMESTAMP)
 | Img_profondeur_clics | URL |
 
 ---
-
+   voici les chamsp qui sont dans airble   ""Nom de site,URL Site,Lien Google Sheet,Lien Google Sheet plan d'action,Lien du rapport my ranking metrics,Génération,Date,Statut,Document Slide Généré,Img_Robots_Txt,robot,Img_Sitemap,sitemaps,Img_Logo,Img_SSL,Img_AmIResponsive,Img_PSI_Mobile,pourcentage smartphone,Img_PSI_Desktop,pourcentage desktop,Img_404,lien_404,Img_Poids_image,Img_balises_title,Img_meme_title,Img_Requetes_cles,Img_meta_description_double,Img_balise_h1_double,Img_balise_h1_absente,Img_longeur_page,Img_autorité_domaine_SEMRUSH,Img_autorité_domaine_AHREF,Img_planD'action,Img_donnee image,Img_meta_description,Img_profondeur_clics_mrm,Img_autorité_domaine_UBERSUGGEST,Img_BACKLINKS,Img_urls,Img_trafic actuel1,Img_trafic actuel2,nombres de clics trafic actuel,nombres de pages indexé trafic actuel,Img_donnee brute gcs,Img_meilleure page,Img_test_gsc,Img_sitemap_declaré,Img_https,Img_profondeur_clics,Img_que des H1 vides,Img_1ère balise Hn n'est pas H1,Img_Sauts de niveau entre les Hn,Img_Hn trop longue
+"""pour confirmer ce qui est ecrit plus tot 
 ## PARTIE 4 — VALIDATION DES CONNEXIONS (7 TESTS OBLIGATOIRES)
 
 Ne pas écrire une seule ligne de feature avant que ces 7 tests soient verts.
@@ -544,7 +545,7 @@ C'est ici que l'utilisateur connecte ses services tiers. Sans ça l'audit ne peu
 
 **Validation côté serveur**
 - Mêmes règles + vérification que l'utilisateur n'a pas déjà un audit en cours (max 1 simultané)
-- Si tout valide :
+- Si tout valide :-
   1. Créer l'enregistrement Airtable → récupérer l'ID Airtable → statut "A faire"
   2. Créer l'audit en DB avec l'ID Airtable
   3. Créer tous les audit_steps en DB avec statut "EN_ATTENTE"

@@ -225,11 +225,26 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             [auditId, userId, siteName, siteUrl, auditSheetUrl, actionPlanSheetUrl, mrmReportUrl, airtableId, 'EN_ATTENTE']
         );
 
-        // 3. Initialize Steps
+        // 3. Initialize Steps — matches exactly the step_keys used by worker.js
         const steps = [
-            'robots_txt', 'sitemap', 'logo', 'psi_mobile', 'psi_desktop',
-            'ami_responsive', 'ssl_labs', 'semrush', 'ahrefs', 'ubersuggest',
-            'sheets_audit', 'sheets_plan', 'gsc', 'mrm'
+            // Phase 1: Public captures (no auth)
+            'robots_txt', 'sitemap', 'logo',
+            'ami_responsive', 'ssl_labs',
+            'psi_mobile', 'psi_desktop',
+            // Phase 2: Google Sheets — Audit
+            'sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double',
+            'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides',
+            'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn',
+            'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc',
+            'sheet_balise_title',
+            // Phase 3: Google Sheets — Plan d'action
+            'plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur',
+            // Phase 4: Google Search Console
+            'gsc_sitemaps', 'gsc_https',
+            // Phase 5: Authenticated sessions
+            'mrm_profondeur', 'ubersuggest_da',
+            // Phase 6: Anti-bot crawls
+            'semrush_authority', 'ahrefs_authority'
         ];
 
         for (const stepKey of steps) {

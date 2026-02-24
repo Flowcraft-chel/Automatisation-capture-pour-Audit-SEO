@@ -87,7 +87,30 @@ async function syncAirtableToDb(io, db) {
                     { key: 'ssl_labs', field: 'Img_SSL' },
                     { key: 'ami_responsive', field: 'Img_AmIResponsive' },
                     { key: 'psi_mobile', field: 'Img_PSI_Mobile' },
-                    { key: 'psi_desktop', field: 'Img_PSI_Desktop' }
+                    { key: 'psi_desktop', field: 'Img_PSI_Desktop' },
+                    { key: 'sheet_images', field: 'Img_Poids_image' },
+                    { key: 'sheet_meme_title', field: 'Img_meme_title' },
+                    { key: 'sheet_meta_desc_double', field: 'Img_meta_description_double' },
+                    { key: 'sheet_doublons_h1', field: 'Img_balise_h1_double' },
+                    { key: 'sheet_h1_absente', field: 'Img_balise_h1_absente' },
+                    { key: 'sheet_h1_vides', field: 'Img_que des H1 vides' },
+                    { key: 'sheet_h1_au_moins', field: 'Img_au moins une H1 vide' },
+                    { key: 'sheet_hn_pas_h1', field: "Img_1ère balise Hn n'est pas H1" },
+                    { key: 'sheet_sauts_hn', field: 'Img_Sauts de niveau entre les Hn' },
+                    { key: 'sheet_hn_longue', field: 'Img_Hn trop longue' },
+                    { key: 'sheet_mots_body', field: 'Img_longeur_page' },
+                    { key: 'sheet_meta_desc', field: 'Img_meta_description' },
+                    { key: 'sheet_balise_title', field: 'Img_balises_title' },
+                    { key: 'plan_synthese', field: "Img_planD'action" },
+                    { key: 'plan_requetes', field: 'Img_Requetes_cles' },
+                    { key: 'plan_donnees_img', field: 'Img_donnee image' },
+                    { key: 'plan_longueur', field: 'Img_longeur_page' },
+                    { key: 'gsc_sitemaps', field: 'Img_sitemap_declaré' },
+                    { key: 'gsc_https', field: 'Img_https' },
+                    { key: 'mrm_profondeur', field: 'Img_profondeur_clics' },
+                    { key: 'ubersuggest_da', field: 'Img_autorité_domaine_UBERSUGGEST' },
+                    { key: 'semrush_authority', field: 'Img_autorité_domaine_SEMRUSH' },
+                    { key: 'ahrefs_authority', field: 'Img_autorité_domaine_AHREF' },
                 ];
 
                 for (const mapping of stepMappings) {
@@ -146,11 +169,20 @@ async function syncAirtableToDb(io, db) {
                 ]
             );
 
-            // 2. Initialize Steps
+            // 2. Initialize Steps — must match worker.js step_keys exactly
             const stepsKeys = [
-                'robots_txt', 'sitemap', 'logo', 'psi_mobile', 'psi_desktop',
-                'ami_responsive', 'ssl_labs', 'semrush', 'ahrefs', 'ubersuggest',
-                'sheets_audit', 'sheets_plan', 'gsc', 'mrm'
+                'robots_txt', 'sitemap', 'logo',
+                'ami_responsive', 'ssl_labs',
+                'psi_mobile', 'psi_desktop',
+                'sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double',
+                'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides',
+                'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn',
+                'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc',
+                'sheet_balise_title',
+                'plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur',
+                'gsc_sitemaps', 'gsc_https',
+                'mrm_profondeur', 'ubersuggest_da',
+                'semrush_authority', 'ahrefs_authority'
             ];
 
             for (const stepKey of stepsKeys) {
