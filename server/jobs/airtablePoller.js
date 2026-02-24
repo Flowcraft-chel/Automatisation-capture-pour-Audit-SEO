@@ -59,38 +59,69 @@ async function syncAirtableToDb(io, db) {
                     existing.url_site !== siteUrl ||
                     existing.sheet_audit_url !== sheetAuditUrl ||
                     existing.sheet_plan_url !== sheetPlanUrl ||
-                    existing.mrm_report_url !== mrmReportUrl) {
+                    existing.mrm_report_url !== mrmReportUrl ||
+                    existing.statut_global !== (airtableStatus === 'fait' ? 'TERMINE' : 'EN_COURS')) {
 
                     console.log(`[POLLER] Updating local record ${existing.id} due to Airtable changes.`);
+                    const newGlobalStatus = airtableStatus === 'fait' ? 'TERMINE' : 'EN_COURS';
+
                     await db.run(
-                        'UPDATE audits SET nom_site = ?, url_site = ?, sheet_audit_url = ?, sheet_plan_url = ?, mrm_report_url = ? WHERE id = ?',
-                        [siteName, siteUrl, sheetAuditUrl, sheetPlanUrl, mrmReportUrl, existing.id]
+                        'UPDATE audits SET nom_site = ?, url_site = ?, sheet_audit_url = ?, sheet_plan_url = ?, mrm_report_url = ?, statut_global = ? WHERE id = ?',
+                        [siteName, siteUrl, sheetAuditUrl, sheetPlanUrl, mrmReportUrl, newGlobalStatus, existing.id]
                     );
 
-                    // Notify frontend of the update
-                    io.emit('audit:updated', {
-                        id: existing.id,
+                    // Notify frontend of the global update
+                    io.emit('audit:update', {
+                        ...existing,
                         nom_site: siteName,
                         url_site: siteUrl,
-                        sheet_audit_url: sheetAuditUrl,
-                        sheet_plan_url: sheetPlanUrl,
-                        mrm_report_url: mrmReportUrl
+                        statut_global: newGlobalStatus
                     });
                 }
 
-                // 2. Re-trigger logic: If "A faire" in Airtable AND local status is terminal (TERMINE or ERREUR)
-                // If local status is EN_ATTENTE or EN_COURS, we skip to avoid duplicates in queue
+                // 2. Progressive Step Sync: If Airtable has specific image fields, mark steps as SUCCESS
+                const stepMappings = [
+                    { key: 'robots_txt', field: 'Img_Robots_Txt' },
+                    { key: 'sitemap', field: 'Img_Sitemap' },
+                    { key: 'logo', field: 'Img_Logo' },
+                    { key: 'ssl_labs', field: 'Img_Ssl_Labs' },
+                    { key: 'ami_responsive', field: 'Img_Responsive' },
+                    { key: 'psi_mobile', field: 'Img_PageSpeed_Mobile' },
+                    { key: 'psi_desktop', field: 'Img_PageSpeed_Desktop' }
+                ];
+
+                for (const mapping of stepMappings) {
+                    const imageUrl = record.get(mapping.field);
+                    if (imageUrl) {
+                        const step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [existing.id, mapping.key]);
+                        if (step && step.statut !== 'SUCCESS' && step.statut !== 'SUCCES') {
+                            console.log(`[POLLER] Step ${mapping.key} mark as SUCCESS for ${existing.id} (found URL in Airtable)`);
+                            await db.run(
+                                'UPDATE audit_steps SET statut = "SUCCESS", output_cloudinary_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                                [imageUrl, step.id]
+                            );
+
+                            // Real-time update for this specific step
+                            io.to(`audit:${existing.id}`).emit('step:update', {
+                                auditId: existing.id,
+                                step: { step_key: mapping.key, statut: 'SUCCESS', output_cloudinary_url: imageUrl }
+                            });
+                        }
+                    }
+                }
+
+                // 3. Re-trigger logic: If "A faire" in Airtable AND local status is terminal (TERMINE or ERREUR)
                 if (airtableStatus === 'A faire' && existing.statut_global !== 'EN_ATTENTE' && existing.statut_global !== 'EN_COURS') {
                     console.log(`[POLLER] Re-triggering audit ${existing.id} from Airtable.`);
                     await db.run('UPDATE audits SET statut_global = "EN_ATTENTE" WHERE id = ?', [existing.id]);
-                    await db.run('UPDATE audit_steps SET statut = "EN_ATTENTE" WHERE audit_id = ?', [existing.id]);
+                    await db.run('UPDATE audit_steps SET statut = "EN_ATTENTE", output_cloudinary_url = NULL WHERE audit_id = ?', [existing.id]);
 
                     await auditQueue.add(`audit-${existing.id}`, { auditId: existing.id, userId: defaultUser.id }, {
                         attempts: 3,
                         backoff: { type: 'exponential', delay: 5000 }
                     });
 
-                    io.emit('audit:updated', { id: existing.id, statut_global: 'EN_ATTENTE' });
+                    io.emit('audit:update', { id: existing.id, statut_global: 'EN_ATTENTE' });
                 }
                 continue;
             }

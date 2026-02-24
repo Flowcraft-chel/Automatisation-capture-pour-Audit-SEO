@@ -50,17 +50,21 @@ const Progression = () => {
         }
     };
 
+    const socketRef = React.useRef(null);
+
     useEffect(() => {
         fetchAudits();
 
-        const socket = io('/', {
+        socketRef.current = io('/', {
             path: '/socket.io',
             withCredentials: true,
-            transports: ['polling', 'websocket'] // Start with polling, upgrade to ws
+            transports: ['polling', 'websocket']
         });
 
+        const socket = socketRef.current;
+
         socket.on('connect', () => {
-            console.log('Socket connecté');
+            console.log('Socket connecté:', socket.id);
         });
 
         socket.on('audit:created', (newAudit) => {
@@ -69,10 +73,7 @@ const Progression = () => {
                 if (exists) return prev;
                 return [newAudit, ...prev];
             });
-            // Automatically select the new audit if it's the only one or if we're on the page
-            if (!activeAudit) {
-                fetchAuditDetails(newAudit.id);
-            }
+            if (!activeAudit) fetchAuditDetails(newAudit.id);
         });
 
         socket.on('audit:update', (updatedAudit) => {
@@ -83,22 +84,24 @@ const Progression = () => {
         });
 
         socket.on('step:update', ({ auditId, step }) => {
-            if (activeAudit?.id === auditId) {
-                setActiveAudit(prev => ({
+            setActiveAudit(prev => {
+                if (prev?.id !== auditId) return prev;
+                return {
                     ...prev,
                     steps: prev.steps.map(s => s.step_key === step.step_key ? { ...s, ...step } : s)
-                }));
-            }
+                };
+            });
         });
 
         return () => socket.disconnect();
     }, []);
 
+    // Effect to join the specific audit room whenever activeAudit changes or socket reconnects
     useEffect(() => {
-        if (activeAudit?.id) {
-            const socket = io('/', { withCredentials: true });
+        const socket = socketRef.current;
+        if (socket && activeAudit?.id) {
+            console.log('Joining audit room:', activeAudit.id);
             socket.emit('join-audit', activeAudit.id);
-            return () => socket.disconnect();
         }
     }, [activeAudit?.id]);
 
@@ -146,8 +149,8 @@ const Progression = () => {
                         <h4 className="font-semibold text-sm text-slate-200 capitalize leading-none mb-1">{step.step_key.replace(/_/g, ' ')}</h4>
                         <div className="flex items-center gap-2">
                             <span className={`text-[10px] font-bold uppercase tracking-tight px-1.5 py-0.5 rounded ${step.statut === 'SUCCESS' ? 'bg-green-500/10 text-green-500' :
-                                    step.statut === 'EN_COURS' ? 'bg-blue-500/10 text-blue-400' :
-                                        'bg-slate-800 text-slate-500'
+                                step.statut === 'EN_COURS' ? 'bg-blue-500/10 text-blue-400' :
+                                    'bg-slate-800 text-slate-500'
                                 }`}>
                                 {step.statut}
                             </span>

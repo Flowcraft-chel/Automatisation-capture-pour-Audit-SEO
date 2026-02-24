@@ -79,8 +79,8 @@ export async function auditRobotsSitemap(url, auditId) {
             const robotsRawUrl = await uploadBufferToCloudinary(robotsViewportBuffer, `robots-raw-${auditId}.png`, 'audit-temp');
 
             const robotsPrompt = sitemapInfo
-                ? "Locate the 'Sitemap:' line and return CROP: x=0, y=[top], width=[full_width], height=[total_height] with 4 lines context above/below."
-                : "Capture the top block of rules. Return CROP: x=0, y=0, width=[full_width], height=[total_height]";
+                ? "Locate the 'Sitemap:' line. IMPORTANT: Trim all empty white space on the right side (narrow crop matching text). Return CROP: x=0, y=[top], width=[target_width], height=[total_height] with 4 lines context above/below."
+                : "Capture the top block of rules. IMPORTANT: Trim all empty white space on the right side (narrow crop matching text). Return CROP: x=0, y=0, width=[target_width], height=[total_height]";
 
             const robotsAiRes = await analyzeImage(robotsRawUrl, robotsPrompt);
             const rMatch = robotsAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
@@ -104,7 +104,7 @@ export async function auditRobotsSitemap(url, auditId) {
                 const sitemapViewportBuffer = await page.screenshot({ fullPage: false });
                 const sitemapRawUrl = await uploadBufferToCloudinary(sitemapViewportBuffer, `sitemap-raw-${auditId}.png`, 'audit-temp');
 
-                const sitemapPrompt = "This is a sitemap XML/HTML page. Provide coordinates for a professional crop of the top entries. Return CROP: x=0, y=0, width=[full_width], height=[total_height] for the first 15-20 lines.";
+                const sitemapPrompt = "This is a sitemap XML/HTML page. Provide coordinates for a professional crop. IMPORTANT: Trim all empty white space on the right side. The capture should be narrow (matching the text width) but can be long (including up to 30-40 lines if possible). Return CROP: x=0, y=0, width=[target_width], height=[target_height].";
                 const sitemapAiRes = await analyzeImage(sitemapRawUrl, sitemapPrompt);
                 const sMatch = sitemapAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
 

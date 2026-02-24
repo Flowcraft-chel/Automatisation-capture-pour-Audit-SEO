@@ -2,6 +2,9 @@ import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { auditRobotsSitemap } from '../modules/robots_sitemap.js';
 import { extractLogo } from '../modules/logo_extraction.js';
+import { auditSslLabs } from '../modules/ssl_labs.js';
+import { auditResponsive } from '../modules/responsive_check.js';
+import { auditPageSpeed } from '../modules/pagespeed.js';
 import { updateAirtableStatut, updateAirtableField } from '../airtable.js';
 
 const REDIS_URL = process.env.REDIS_URL;
@@ -124,11 +127,49 @@ export const initWorker = (io, db) => {
                 }
             }
 
-            // STEP 3: Placeholder for others (Sequential loop)
-            console.log(`[WORKER] [JOB ${job.id}] Executing Remaining Steps (Psi, Semi, etc.)...`);
+            // STEP 3: SSL Labs
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: SSL Labs...`);
+            await updateStep('ssl_labs', 'EN_COURS');
+            const domain = new URL(siteUrl).hostname;
+            const sslResult = await auditSslLabs(domain, auditId);
+            await updateStep('ssl_labs', sslResult.statut, null, sslResult.capture);
+            if (audit.airtable_record_id && sslResult.capture) {
+                await updateAirtableField(audit.airtable_record_id, 'Img_Ssl_Labs', sslResult.capture);
+            }
+
+            // STEP 4: Responsive Check
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Responsive Check...`);
+            await updateStep('ami_responsive', 'EN_COURS');
+            const respResult = await auditResponsive(siteUrl, auditId);
+            await updateStep('ami_responsive', respResult.statut, null, respResult.capture);
+            if (audit.airtable_record_id && respResult.capture) {
+                await updateAirtableField(audit.airtable_record_id, 'Img_Responsive', respResult.capture);
+            }
+
+            // STEP 5: PageSpeed Mobile
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Mobile...`);
+            await updateStep('psi_mobile', 'EN_COURS');
+            const psiMobile = await auditPageSpeed(siteUrl, auditId, 'mobile');
+            await updateStep('psi_mobile', psiMobile.statut, psiMobile.details, psiMobile.capture);
+            if (audit.airtable_record_id) {
+                if (psiMobile.score) await updateAirtableField(audit.airtable_record_id, 'mobilescore', psiMobile.score);
+                if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PageSpeed_Mobile', psiMobile.capture);
+            }
+
+            // STEP 6: PageSpeed Desktop
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Desktop...`);
+            await updateStep('psi_desktop', 'EN_COURS');
+            const psiDesktop = await auditPageSpeed(siteUrl, auditId, 'desktop');
+            await updateStep('psi_desktop', psiDesktop.statut, psiDesktop.details, psiDesktop.capture);
+            if (audit.airtable_record_id) {
+                if (psiDesktop.score) await updateAirtableField(audit.airtable_record_id, 'desktopscore', psiDesktop.score);
+                if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PageSpeed_Desktop', psiDesktop.capture);
+            }
+
+            // STEP 7: Placeholder for others (Sequential loop)
+            console.log(`[WORKER] [JOB ${job.id}] Executing Remaining Steps (Semi, etc.)...`);
             const remainingSteps = [
-                'psi_mobile', 'psi_desktop',
-                'ami_responsive', 'ssl_labs', 'semrush', 'ahrefs', 'ubersuggest',
+                'semrush', 'ahrefs', 'ubersuggest',
                 'sheets_audit', 'sheets_plan', 'gsc', 'mrm'
             ];
 
