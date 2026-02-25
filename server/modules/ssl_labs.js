@@ -30,6 +30,7 @@ export async function auditSslLabs(domain, auditId) {
         // 1. Initialise scan (can take a few minutes if not cached)
         let data = null;
         let attempts = 0;
+        let retries529 = 0;
         const maxAttempts = 40; // 40 * 15s = 10 mins max
 
         while (attempts < maxAttempts) {
@@ -53,7 +54,12 @@ export async function auditSslLabs(domain, auditId) {
                     await new Promise(resolve => setTimeout(resolve, 30000));
                     continue;
                 } else if (err.response && err.response.status === 529) {
-                    console.log(`[MODULE-SSL] API overloaded (529), waiting 60s before retry...`);
+                    retries529++;
+                    if (retries529 > 3) {
+                        console.log(`[MODULE-SSL] API overloaded (529) for too long, skipping module...`);
+                        return { statut: 'SKIP', grade: 'SSL Labs surchargé', capture: null };
+                    }
+                    console.log(`[MODULE-SSL] API overloaded (529), waiting 60s before retry (${retries529}/3)...`);
                     await new Promise(resolve => setTimeout(resolve, 60000));
                     continue;
                 } else if (err.response && err.response.status >= 500) {
