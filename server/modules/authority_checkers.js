@@ -126,14 +126,13 @@ export async function captureAhrefs(siteUrl, auditId) {
     const result = { statut: 'ERROR', capture: null };
     const domain = new URL(siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`).hostname;
 
-    // Use real Chrome non-headless for Cloudflare bypass
+    // Use Chromium headless with anti-detection flags (Chrome channel not available on Railway)
     const browser = await chromium.launch({
-        headless: false,
-        channel: 'chrome',
+        headless: true,
         args: [
             '--no-sandbox', '--disable-setuid-sandbox',
-            '--window-position=-2400,-2400',
-            '--disable-blink-features=AutomationControlled'
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage'
         ]
     });
     const context = await browser.newContext({

@@ -192,20 +192,32 @@ async function openSheet(sheetUrl, googleCookies) {
 
 // ── Screenshot, AI crop, upload to Cloudinary ────────────────────────────────
 async function captureAndUpload(page, promptText, cloudinaryFolder) {
-    const tmpPath = path.resolve(`temp_sheet_${uuidv4()}.png`);
+    const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+    const tmpPath = path.join(tmpDir, `temp_sheet_${uuidv4()}.png`);
+    console.log(`[SHEETS] Taking screenshot → ${tmpPath}`);
     await page.screenshot({ path: tmpPath, fullPage: false });
+    console.log(`[SHEETS] Sending to AI for crop...`);
     const croppedPath = await cropWithAI(tmpPath, promptText);
+    console.log(`[SHEETS] Uploading to Cloudinary → ${cloudinaryFolder}`);
     const result = await uploadToCloudinary(croppedPath, cloudinaryFolder);
     if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
     if (fs.existsSync(tmpPath) && tmpPath !== croppedPath) fs.unlinkSync(tmpPath);
     return result?.secure_url || result?.url || result;
 }
 
-const SHEET_CROP_PROMPT = `Cette image est une capture d'un Google Sheet.
-Rogne précisément pour ne garder que le tableau de données.
-Supprime : barre de menus Google Sheets en haut, barre d'onglets en bas, marges, espaces vides.
-Ne coupe aucune ligne de données.
-CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
+const SHEET_CROP_PROMPT = `Tu es un expert en rognage d'images.
+Cette image est une capture d'écran d'un Google Sheet.
+Tu DOIS rogner pour ne garder STRICTEMENT que le tableau de données visibles.
+
+RÈGLES STRICTES :
+1. Supprime TOUT en haut : barre de menus, barre d'outils, barre de formule, en-tête du document
+2. Supprime TOUT en bas : barre d'onglets, barre de défilement, pied de page
+3. Supprime TOUTES les marges vides à droite et en bas du tableau
+4. Supprime les colonnes de lettres (A, B, C...) et les numéros de lignes (1, 2, 3...)
+5. Le résultat doit être un tableau SERRÉ sans aucun espace vide autour
+6. NE COUPE AUCUNE donnée du tableau
+
+Réponds UNIQUEMENT avec : CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUDIT SHEET TABS
@@ -304,7 +316,7 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
 
         for (const { col, field, sort } of columns) {
             // RELOAD to ensure clean state before each column capture
-            await page.reload({ waitUntil: 'networkidle', timeout: 60000 });
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
             await page.addStyleTag({ content: SHEETS_HIDE_CSS });
             const tabOk = await navigateToTab(page, 'Balises H1-H6');
             if (!tabOk) continue;
