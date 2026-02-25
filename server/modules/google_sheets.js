@@ -215,7 +215,7 @@ RÈGLES STRICTES :
 3. Supprime TOUTES les marges vides à droite et en bas du tableau
 4. Supprime les colonnes de lettres (A, B, C...) et les numéros de lignes (1, 2, 3...)
 5. Le résultat doit être un tableau SERRÉ sans aucun espace vide autour
-6. NE COUPE AUCUNE donnée du tableau
+6. NE COUPE AUCUNE donnée du tableau. Tu DOIS ABSOLUMENT CONSERVER la première ligne d'en-tête contenant les noms des colonnes (ex: URL, Destination, H1...). Ne la rogne surtout pas.
 
 Réponds UNIQUEMENT avec : CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
