@@ -20,7 +20,7 @@ export async function initAirtablePoller(io, db) {
 }
 
 async function syncAirtableToDb(io, db) {
-    console.log('[POLLER] Syncing with Airtable...');
+
 
     try {
         const records = await table.select({
