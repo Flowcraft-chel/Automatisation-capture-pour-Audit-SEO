@@ -7,7 +7,7 @@ import { initDb } from './db.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
-import { captureSession } from './sessions.js';
+import { encrypt } from './utils/encrypt.js';
 import { createAirtableAudit, updateAirtableStatut } from './airtable.js';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -181,29 +181,71 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
     res.json(user);
 });
 
-// Session Capture
-app.post('/api/sessions/connect/:service', authenticateToken, async (req, res) => {
+// ── Cookie Import (JSON from Cookie-Editor extension) ──────────────────
+app.post('/api/sessions/import/:service', authenticateToken, async (req, res) => {
+    const { service } = req.params;
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    const validServices = ['google', 'mrm', 'ubersuggest'];
+    if (!validServices.includes(service)) {
+        return res.status(400).json({ error: `Service non supporté. Utilisez: ${validServices.join(', ')}` });
+    }
+
+    try {
+        const { cookies } = req.body;
+        if (!cookies || !Array.isArray(cookies) || cookies.length === 0) {
+            return res.status(400).json({ error: 'Format invalide. Exportez vos cookies depuis Cookie-Editor au format JSON.' });
+        }
+
+        // Normalize cookie format (Cookie-Editor uses different casing)
+        const normalized = cookies.map(c => ({
+            name: c.name || c.Name,
+            value: c.value || c.Value,
+            domain: c.domain || c.Domain || '',
+            path: c.path || c.Path || '/',
+            secure: c.secure ?? c.Secure ?? false,
+            httpOnly: c.httpOnly ?? c.HttpOnly ?? false,
+            sameSite: (c.sameSite || c.SameSite || 'Lax'),
+            expires: c.expirationDate || c.expires || -1
+        })).filter(c => c.name && c.value);
+
+        if (normalized.length === 0) {
+            return res.status(400).json({ error: 'Aucun cookie valide trouvé dans le JSON.' });
+        }
+
+        console.log(`[SESSION] Importing ${normalized.length} cookies for ${service} (user: ${userId})`);
+
+        const encryptedCookies = encrypt(JSON.stringify(normalized));
+        const sessionId = uuidv4();
+
+        await db.run('DELETE FROM user_sessions WHERE user_id = ? AND service = ?', [userId, service]);
+        await db.run(
+            'INSERT INTO user_sessions (id, user_id, service, encrypted_cookies) VALUES (?, ?, ?, ?)',
+            [sessionId, userId, service, encryptedCookies]
+        );
+
+        console.log(`[SESSION] SUCCESS: ${normalized.length} cookies stored for ${service}`);
+        res.json({ message: `${normalized.length} cookies importés pour ${service}`, count: normalized.length });
+
+    } catch (err) {
+        console.error('[SESSION] Import error:', err);
+        res.status(500).json({ error: err.message || 'Erreur lors de l\'import des cookies' });
+    }
+});
+
+// ── Cookie Delete ──────────────────────────────────────────────────────
+app.delete('/api/sessions/delete/:service', authenticateToken, async (req, res) => {
     const { service } = req.params;
     const userId = req.user.userId;
     if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
 
     try {
-        console.log(`[AUTH] User ${userId} attempting to connect ${service}...`);
-        const sessionData = await captureSession(service, userId);
-        console.log(`[SESSION] Finalisation pour ${service}...`);
-        const sessionId = uuidv4();
-
-        // Enforce update if exists (Upsert manual for SQLite compatibility)
         await db.run('DELETE FROM user_sessions WHERE user_id = ? AND service = ?', [userId, service]);
-        await db.run(
-            'INSERT INTO user_sessions (id, user_id, service, encrypted_cookies) VALUES (?, ?, ?, ?)',
-            [sessionId, userId, service, sessionData.encryptedCookies]
-        );
-
-        res.json({ message: `Service ${service} connecté avec succès` });
+        console.log(`[SESSION] Deleted cookies for ${service} (user: ${userId})`);
+        res.json({ message: `Cookies ${service} supprimés` });
     } catch (err) {
-        console.error('SERVER ERROR (session):', err);
-        res.status(500).json({ error: err.message || 'Erreur lors de la capture de session' });
+        res.status(500).json({ error: err.message });
     }
 });
 
