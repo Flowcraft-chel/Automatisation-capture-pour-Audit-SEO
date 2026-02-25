@@ -242,7 +242,7 @@ export async function captureSheetImages(sheetUrl, auditId, googleCookies) {
             if (!allRows.length) return;
 
             // Find real header row (skip Google Finance overlay)
-            const knownHeaders = ['url', 'destination', 'taille', 'image', 'poids', 'format', 'type'];
+            const knownHeaders = ['url', 'destination', 'taille', 'image', 'poids', 'format', 'type', 'octets'];
             let headerRowIdx = 0;
             for (let i = 0; i < Math.min(allRows.length, 5); i++) {
                 const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
@@ -256,36 +256,38 @@ export async function captureSheetImages(sheetUrl, auditId, googleCookies) {
             const headers = Array.from(rows[0].children);
             const headerTexts = headers.map(h => h.innerText.trim().toLowerCase());
 
-            // Find Destination and Taille columns
+            // Find "Destination" and "Taille (octets)" columns by exact match
             let destIdx = headerTexts.findIndex(h => h.includes('destination'));
             let tailleIdx = headerTexts.findIndex(h => h.includes('taille'));
             if (destIdx === -1) destIdx = 0; // fallback to first column
-            if (tailleIdx === -1) tailleIdx = headers.findIndex(h => h.innerText.includes('Taille')) || 1;
+            if (tailleIdx === -1) tailleIdx = 1; // fallback to second column
 
             const tbody = rows[0]?.parentElement || document.querySelector('.waffle tbody');
             if (!tbody) return;
             const dataRows = rows.slice(1);
 
-            // Hide rows where taille < 100ko (100000 bytes)
+            // Parse values and hide rows where taille < 100ko (100000 bytes)
             dataRows.forEach(tr => {
                 const cell = tr.children[tailleIdx];
                 if (!cell) return;
-                const text = (cell.innerText || '').toLowerCase().replace(',', '.');
+                const text = (cell.innerText || '').replace(/\s/g, '').replace(',', '.');
                 let val = parseFloat(text) || 0;
-                if (text.includes('mo') || text.includes('mb')) val *= 1024 * 1024;
-                else if (text.includes('ko') || text.includes('kb')) val *= 1024;
+                // If value contains "Mo" or "MB", convert to bytes
+                if (text.toLowerCase().includes('mo') || text.toLowerCase().includes('mb')) val *= 1024 * 1024;
+                else if (text.toLowerCase().includes('ko') || text.toLowerCase().includes('kb')) val *= 1024;
+                // Otherwise assume value is already in bytes (octets)
                 tr.dataset.val = val;
                 if (val < 100000) tr.style.display = 'none';
             });
 
-            // Sort descending
+            // Sort descending by taille
             dataRows.sort((a, b) => parseFloat(b.dataset.val || 0) - parseFloat(a.dataset.val || 0));
             dataRows.forEach(tr => tbody.appendChild(tr));
 
             // Hide overlay rows before real header
             for (let i = 0; i < headerRowIdx; i++) allRows[i].style.display = 'none';
 
-            // Keep only Destination + Taille columns (non-destructive)
+            // Keep ONLY "Destination" and "Taille (octets)" columns — hide all others
             const keepIdx = [destIdx, tailleIdx];
             rows.forEach(tr => {
                 Array.from(tr.children).forEach((td, idx) => {

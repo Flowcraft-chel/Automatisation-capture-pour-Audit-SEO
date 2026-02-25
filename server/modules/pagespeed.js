@@ -166,8 +166,8 @@ async function auditPageSpeed(url, auditId, strategy) {
         // ── 7. Smart crop with sharp: remove any remaining bottom padding ──
         const meta = await sharp(fullPath).metadata();
         // Since we already hid excess sections, we just need a safety crop
-        // Keep at most 65% of the height (the score + metrics area)
-        const maxCropH = Math.min(meta.height, Math.floor(meta.height * 0.65));
+        // Keep at most 75% of the height (the score + metrics area + a bit of breathing room)
+        const maxCropH = Math.min(meta.height, Math.floor(meta.height * 0.75));
         const croppedPath = fullPath.replace('.png', '_cropped.png');
 
         await sharp(fullPath)

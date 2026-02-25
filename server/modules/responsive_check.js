@@ -6,15 +6,19 @@ import { uploadToCloudinary } from '../utils/cloudinary.js';
 
 /**
  * Audit Responsive Design via AmIResponsive
- * - Wait up to 30s for the site to actually load inside device frames
- * - Do NOT inject error banners — just capture what's visible
+ * - Navigate to amiresponsive.co.uk with the site URL
+ * - Wait for the devices container (.devices) to appear
+ * - Wait for the iframes inside the devices to actually load the site content
+ * - Dismiss cookie banners if any
+ * - Capture only the devices area
  */
 export async function auditResponsive(url, auditId) {
     const domain = new URL(url).hostname;
     const amiUrl = `https://amiresponsive.co.uk/?url=${encodeURIComponent(url)}`;
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
-        viewport: { width: 1400, height: 1000 }
+        viewport: { width: 1400, height: 1000 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     });
     const page = await context.newPage();
 
@@ -26,24 +30,22 @@ export async function auditResponsive(url, auditId) {
 
     try {
         console.log(`[MODULE-RESPONSIVE] Starting check for ${domain}...`);
-        await page.goto(amiUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        // Use networkidle to wait for all resources to load
+        await page.goto(amiUrl, { waitUntil: 'networkidle', timeout: 90000 });
 
         // Wait for the devices container to appear
         console.log('[MODULE-RESPONSIVE] Waiting for devices container...');
         try {
             await page.waitForSelector('.FrameContainer, .devices, [class*="device"], iframe', {
-                state: 'visible', timeout: 15000
+                state: 'visible', timeout: 20000
             });
+            console.log('[MODULE-RESPONSIVE] Devices container found.');
         } catch {
-            console.log('[MODULE-RESPONSIVE] No device container found, waiting...');
+            console.log('[MODULE-RESPONSIVE] No device container found, continuing anyway...');
         }
 
-        // Wait 30 seconds for the site to load inside the device frames
-        console.log('[MODULE-RESPONSIVE] Waiting 30s for site to load inside frames...');
-        await page.waitForTimeout(30000);
-
-        // Dismiss any cookie banners on amiresponsive itself
-        for (const txt of ['Accept', 'OK', 'Tout accepter', 'I agree']) {
+        // Dismiss cookie banners EARLY so they don't cover the frames
+        for (const txt of ['Accept', 'OK', 'Tout accepter', 'I agree', 'Accept all', 'Accepter']) {
             try {
                 const btn = page.locator(`button:has-text("${txt}")`).first();
                 if (await btn.count() > 0 && await btn.isVisible()) {
@@ -53,6 +55,30 @@ export async function auditResponsive(url, auditId) {
                 }
             } catch { }
         }
+
+        // CRITICAL: Wait for iframes to load the site content inside device frames
+        console.log('[MODULE-RESPONSIVE] Waiting for iframes to load site content...');
+        try {
+            // Wait for at least one iframe to have content loaded
+            await page.waitForFunction(() => {
+                const iframes = document.querySelectorAll('iframe');
+                if (iframes.length === 0) return false;
+                // Check if at least one iframe has a valid src and appears loaded
+                for (const iframe of iframes) {
+                    if (iframe.src && iframe.src.length > 10 && iframe.offsetHeight > 50) {
+                        return true;
+                    }
+                }
+                return false;
+            }, { timeout: 30000 });
+            console.log('[MODULE-RESPONSIVE] Iframes detected with content.');
+        } catch {
+            console.log('[MODULE-RESPONSIVE] Iframe detection timeout, proceeding...');
+        }
+
+        // Wait additional time for rendering and animations to complete
+        console.log('[MODULE-RESPONSIVE] Waiting 15s for full rendering...');
+        await page.waitForTimeout(15000);
 
         // Take screenshot — capture only the devices area if possible
         const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
