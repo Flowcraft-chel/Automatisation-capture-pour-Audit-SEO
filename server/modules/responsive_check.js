@@ -11,7 +11,7 @@ import { uploadToCloudinary } from '../utils/cloudinary.js';
  */
 export async function auditResponsive(url, auditId) {
     const domain = new URL(url).hostname;
-    const amiUrl = `https://ui.dev/amiresponsive?url=${encodeURIComponent(url)}`;
+    const amiUrl = `https://amiresponsive.co.uk/?url=${encodeURIComponent(url)}`;
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
         viewport: { width: 1400, height: 1000 }
