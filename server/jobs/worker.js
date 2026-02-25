@@ -191,14 +191,26 @@ export const initWorker = (io, db) => {
             // ──────────────────────────────────────────────────────────────────
             // HELPER: Load encrypted cookies for a service
             // ──────────────────────────────────────────────────────────────────
+            // ──────────────────────────────────────────────────────────────────
             const getSessionCookies = async (service) => {
                 const sessionRow = await db.get(
                     'SELECT encrypted_cookies FROM user_sessions WHERE user_id = ? AND service = ? ORDER BY created_at DESC LIMIT 1',
                     [userId, service]
                 );
-                if (!sessionRow) return null;
-                try { return JSON.parse(decrypt(sessionRow.encrypted_cookies)); }
-                catch { return null; }
+                if (!sessionRow) {
+                    console.log(`[WORKER] [JOB ${job.id}] No session found in DB for service: ${service}`);
+                    return null;
+                }
+                try {
+                    const decryptedStr = decrypt(sessionRow.encrypted_cookies);
+                    const cookies = JSON.parse(decryptedStr);
+                    console.log(`[WORKER] [JOB ${job.id}] Successfully decrypted cookies for service: ${service} (${cookies.length} cookies)`);
+                    return cookies;
+                }
+                catch (e) {
+                    console.error(`[WORKER] [JOB ${job.id}] Failed to decrypt cookies for service: ${service}`, e.message);
+                    return null;
+                }
             };
 
             // STEP 7: Google Sheets — Audit Sheet
@@ -310,11 +322,11 @@ export const initWorker = (io, db) => {
 
             // STEP 10: MRM
             await updateStep('mrm_profondeur', 'EN_COURS');
-            const mrmSession = await db.get('SELECT encrypted_cookies FROM user_sessions WHERE user_id = ? AND service = ? ORDER BY created_at DESC LIMIT 1', [userId, 'mrm']);
-            if (!mrmSession || !audit.mrm_report_url) {
-                await updateStep('mrm_profondeur', 'SKIP', !mrmSession ? 'Session MRM non configurée' : 'Lien MRM non fourni');
+            const mrmCookies = await getSessionCookies('mrm');
+            if (!mrmCookies || !audit.mrm_report_url) {
+                await updateStep('mrm_profondeur', 'SKIP', !mrmCookies ? 'Session MRM non configurée' : 'Lien MRM non fourni');
             } else {
-                const mrmRes = await captureMrmProfondeur(audit.mrm_report_url, auditId, mrmSession.encrypted_cookies);
+                const mrmRes = await captureMrmProfondeur(audit.mrm_report_url, auditId, mrmCookies);
                 await updateStep('mrm_profondeur', mrmRes.statut, mrmRes.details, mrmRes.capture);
                 if (audit.airtable_record_id && mrmRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics', mrmRes.capture);
             }
@@ -342,13 +354,17 @@ export const initWorker = (io, db) => {
             await updateStep('ahrefs_authority', ahrRes.statut, ahrRes.details, ahrRes.capture);
             if (audit.airtable_record_id && ahrRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_AHREF', ahrRes.capture);
 
-            // STEP 14: 404 Check
+            // STEP 14: 404 Check (from Sheet "Erreurs" tab)
             await updateStep('check_404', 'EN_COURS');
-            const res404 = await check404(siteUrl, auditId);
-            await updateStep('check_404', res404.statut, res404.details, res404.capture);
-            if (audit.airtable_record_id) {
-                if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);
-                if (res404.lien404) await updateAirtableField(audit.airtable_record_id, 'lien_404', res404.lien404);
+            if (sheetAuditUrl) {
+                const res404 = await check404(sheetAuditUrl, auditId, googleCookies);
+                await updateStep('check_404', res404.statut, res404.details, res404.capture);
+                if (audit.airtable_record_id) {
+                    if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);
+                    if (res404.lien404) await updateAirtableField(audit.airtable_record_id, 'lien_404', res404.lien404);
+                }
+            } else {
+                await updateStep('check_404', 'SKIP', 'Lien Google Sheet non fourni');
             }
 
             // STEP 15: GSC Performance (Traffic) — requires Google cookies

@@ -232,11 +232,34 @@ export async function captureSheetImages(sheetUrl, auditId, googleCookies) {
 
         // Sort by Taille descending via JS (Sheets API or UI)
         await page.evaluate(() => {
-            const rows = Array.from(document.querySelectorAll('.waffle tr'));
-            if (!rows.length) return;
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
+            let allRows = [];
+            for (const sel of tableSelectors) {
+                allRows = Array.from(document.querySelectorAll(sel));
+                if (allRows.length > 1) break;
+            }
+            if (!allRows.length) return;
+
+            // Find real header row (skip Google Finance overlay)
+            const knownHeaders = ['url', 'destination', 'taille', 'image', 'poids', 'format', 'type'];
+            let headerRowIdx = 0;
+            for (let i = 0; i < Math.min(allRows.length, 5); i++) {
+                const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
+                if (texts.some(t => knownHeaders.some(kw => t.includes(kw)))) {
+                    headerRowIdx = i;
+                    break;
+                }
+            }
+
+            const rows = allRows.slice(headerRowIdx);
             const headers = Array.from(rows[0].children);
-            let tailleIdx = headers.findIndex(h => h.innerText.includes('Taille'));
-            if (tailleIdx === -1) tailleIdx = 1;
+            const headerTexts = headers.map(h => h.innerText.trim().toLowerCase());
+
+            // Find Destination and Taille columns
+            let destIdx = headerTexts.findIndex(h => h.includes('destination'));
+            let tailleIdx = headerTexts.findIndex(h => h.includes('taille'));
+            if (destIdx === -1) destIdx = 0; // fallback to first column
+            if (tailleIdx === -1) tailleIdx = headers.findIndex(h => h.innerText.includes('Taille')) || 1;
 
             const tbody = document.querySelector('.waffle tbody') || document.querySelector('.waffle');
             const dataRows = rows.slice(1);
@@ -257,14 +280,14 @@ export async function captureSheetImages(sheetUrl, auditId, googleCookies) {
             dataRows.sort((a, b) => parseFloat(b.dataset.val || 0) - parseFloat(a.dataset.val || 0));
             dataRows.forEach(tr => tbody.appendChild(tr));
 
+            // Hide overlay rows before real header
+            for (let i = 0; i < headerRowIdx; i++) allRows[i].style.display = 'none';
+
             // Keep only Destination + Taille columns (non-destructive)
-            const keepIdx = [0, tailleIdx];
-            Array.from(document.querySelectorAll('.waffle tr')).forEach((tr, i) => {
-                const cells = Array.from(tr.children);
-                cells.forEach((td, idx) => {
-                    if (!keepIdx.includes(idx)) {
-                        td.style.display = 'none';
-                    }
+            const keepIdx = [destIdx, tailleIdx];
+            rows.forEach(tr => {
+                Array.from(tr.children).forEach((td, idx) => {
+                    if (!keepIdx.includes(idx)) td.style.display = 'none';
                 });
             });
         });
@@ -326,13 +349,35 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
             const hasRelevantData = await page.evaluate(({ colName }) => {
                 // Try multiple selectors for public + private views
                 const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
-                let rows = [];
+                let allRows = [];
                 for (const sel of tableSelectors) {
-                    rows = Array.from(document.querySelectorAll(sel));
-                    if (rows.length > 1) break;
+                    allRows = Array.from(document.querySelectorAll(sel));
+                    if (allRows.length > 1) break;
                 }
-                if (rows.length <= 1) return { found: false, reason: `No table rows (tried ${tableSelectors.join(', ')})` };
+                if (allRows.length <= 1) return { found: false, reason: `No table rows (tried ${tableSelectors.join(', ')})` };
 
+                // CRITICAL FIX: Find the REAL header row by looking for known column names
+                // Skip rows that are Google Finance disclaimers or other overlay content
+                const knownHeaders = ['url', 'h1', 'hn', 'balise', 'absente', 'vide', 'sauts', 'longue', 'destination'];
+                let headerRowIdx = -1;
+
+                for (let i = 0; i < Math.min(allRows.length, 5); i++) {
+                    const cellTexts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
+                    // Check if this row looks like a header (contains at least one known column keyword)
+                    const isHeader = cellTexts.some(text => knownHeaders.some(kw => text.includes(kw)));
+                    if (isHeader) {
+                        headerRowIdx = i;
+                        break;
+                    }
+                }
+
+                if (headerRowIdx === -1) {
+                    // Log what we found for debugging
+                    const firstRowText = Array.from(allRows[0]?.children || []).map(c => c.innerText.trim().substring(0, 50));
+                    return { found: false, reason: `No valid header row found. First row content: [${firstRowText.join(' | ')}]` };
+                }
+
+                const rows = allRows.slice(headerRowIdx); // Start from the real header row
                 const headers = Array.from(rows[0]?.children || []);
                 const headerTexts = headers.map(h => h.innerText.trim().toLowerCase());
                 const colIdx = headerTexts.findIndex(h => h.includes(colName.toLowerCase()));
@@ -348,7 +393,7 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
                         return val === 'oui';
                     }
                 });
-                return { found: true, hasData, rowCount: rows.length - 1 };
+                return { found: true, hasData, rowCount: rows.length - 1, headerRowIdx };
             }, { colName: col });
 
             console.log(`[SHEETS] H1-H6 "${col}": ${JSON.stringify(hasRelevantData)}`);
@@ -362,11 +407,24 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
 
             await page.evaluate(({ colName, sortDir }) => {
                 const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
-                let rows = [];
+                let allRows = [];
                 for (const sel of tableSelectors) {
-                    rows = Array.from(document.querySelectorAll(sel));
-                    if (rows.length > 1) break;
+                    allRows = Array.from(document.querySelectorAll(sel));
+                    if (allRows.length > 1) break;
                 }
+
+                // Find the REAL header row (skip Google Finance disclaimers)
+                const knownHeaders = ['url', 'h1', 'hn', 'balise', 'absente', 'vide', 'sauts', 'longue', 'destination'];
+                let headerRowIdx = 0;
+                for (let i = 0; i < Math.min(allRows.length, 5); i++) {
+                    const cellTexts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
+                    if (cellTexts.some(text => knownHeaders.some(kw => text.includes(kw)))) {
+                        headerRowIdx = i;
+                        break;
+                    }
+                }
+
+                const rows = allRows.slice(headerRowIdx);
                 const headers = Array.from(rows[0]?.children || []);
                 const colIdx = headers.findIndex(h => h.innerText.trim().toLowerCase().includes(colName.toLowerCase()));
                 if (colIdx === -1) return;
@@ -396,6 +454,11 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
                     dataRows.sort((a, b) => parseInt(b.dataset.textVal) - parseInt(a.dataset.textVal));
                 }
                 dataRows.forEach(tr => tbody.appendChild(tr));
+
+                // Hide overlay rows (those before the real header)
+                for (let i = 0; i < headerRowIdx; i++) {
+                    allRows[i].style.display = 'none';
+                }
 
                 // Keep only URL column (0) + the checked column
                 const keepIdx = [0, colIdx];
@@ -479,9 +542,22 @@ export async function captureSheetMetaDesc(sheetUrl, auditId, googleCookies) {
         if (!found) { result.statut = 'SKIP'; result.details = 'Onglet Meta desc introuvable'; return result; }
 
         const hasZero = await page.evaluate(() => {
-            const rows = Array.from(document.querySelectorAll('.waffle tr'));
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
+            let allRows = [];
+            for (const sel of tableSelectors) {
+                allRows = Array.from(document.querySelectorAll(sel));
+                if (allRows.length > 1) break;
+            }
+            // Find real header row
+            const knownHeaders = ['url', 'destination', 'meta', 'description', 'caractère', 'nb', 'longueur'];
+            let headerIdx = 0;
+            for (let i = 0; i < Math.min(allRows.length, 5); i++) {
+                const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
+                if (texts.some(t => knownHeaders.some(kw => t.includes(kw)))) { headerIdx = i; break; }
+            }
+            const rows = allRows.slice(headerIdx);
             const headers = Array.from(rows[0]?.children || []);
-            const colIdx = headers.findIndex(h => h.innerText.includes('Nb de caractères'));
+            const colIdx = headers.findIndex(h => h.innerText.toLowerCase().includes('nb de caractères') || h.innerText.toLowerCase().includes('caractère'));
             if (colIdx === -1) return false;
             return rows.slice(1).some(tr => {
                 const v = parseFloat(tr.children[colIdx]?.innerText || '999');
@@ -493,12 +569,24 @@ export async function captureSheetMetaDesc(sheetUrl, auditId, googleCookies) {
 
         // Sort ascending — 0s come to top, hide non-zero rows
         await page.evaluate(() => {
-            const rows = Array.from(document.querySelectorAll('.waffle tr'));
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
+            let allRows = [];
+            for (const sel of tableSelectors) {
+                allRows = Array.from(document.querySelectorAll(sel));
+                if (allRows.length > 1) break;
+            }
+            const knownHeaders = ['url', 'destination', 'meta', 'description', 'caractère', 'nb', 'longueur'];
+            let headerIdx = 0;
+            for (let i = 0; i < Math.min(allRows.length, 5); i++) {
+                const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
+                if (texts.some(t => knownHeaders.some(kw => t.includes(kw)))) { headerIdx = i; break; }
+            }
+            const rows = allRows.slice(headerIdx);
             const headers = Array.from(rows[0]?.children || []);
-            const colIdx = headers.findIndex(h => h.innerText.includes('Nb de caractères'));
+            const colIdx = headers.findIndex(h => h.innerText.toLowerCase().includes('nb de caractères') || h.innerText.toLowerCase().includes('caractère'));
             if (colIdx === -1) return;
 
-            const tbody = document.querySelector('.waffle tbody') || document.querySelector('.waffle');
+            const tbody = rows[0]?.parentElement || document.querySelector('.waffle tbody');
             const dataRows = rows.slice(1);
 
             dataRows.forEach(tr => {
@@ -509,6 +597,9 @@ export async function captureSheetMetaDesc(sheetUrl, auditId, googleCookies) {
 
             dataRows.sort((a, b) => parseFloat(a.dataset.val) - parseFloat(b.dataset.val));
             dataRows.forEach(tr => tbody.appendChild(tr));
+
+            // Hide overlay rows
+            for (let i = 0; i < headerIdx; i++) allRows[i].style.display = 'none';
         });
 
         await page.waitForTimeout(1000);
@@ -529,9 +620,21 @@ export async function captureSheetBaliseTitle(sheetUrl, auditId, googleCookies) 
         if (!found) { result.statut = 'SKIP'; result.details = 'Onglet Balise title introuvable'; return result; }
 
         const hasTropLongue = await page.evaluate(() => {
-            const rows = Array.from(document.querySelectorAll('.waffle tr'));
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
+            let allRows = [];
+            for (const sel of tableSelectors) {
+                allRows = Array.from(document.querySelectorAll(sel));
+                if (allRows.length > 1) break;
+            }
+            const knownHeaders = ['url', 'destination', 'title', 'balise', 'état', 'longueur'];
+            let headerIdx = 0;
+            for (let i = 0; i < Math.min(allRows.length, 5); i++) {
+                const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
+                if (texts.some(t => knownHeaders.some(kw => t.includes(kw)))) { headerIdx = i; break; }
+            }
+            const rows = allRows.slice(headerIdx);
             const headers = Array.from(rows[0]?.children || []);
-            const colIdx = headers.findIndex(h => h.innerText.includes('État balise title'));
+            const colIdx = headers.findIndex(h => h.innerText.toLowerCase().includes('état') || h.innerText.toLowerCase().includes('balise title'));
             if (colIdx === -1) return false;
             return rows.slice(1).some(tr =>
                 (tr.children[colIdx]?.innerText || '').toLowerCase().includes('trop longue')
@@ -542,9 +645,21 @@ export async function captureSheetBaliseTitle(sheetUrl, auditId, googleCookies) 
 
         // Keeps and sorts 'trop longue' values
         await page.evaluate(() => {
-            const rows = Array.from(document.querySelectorAll('.waffle tr'));
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
+            let allRows = [];
+            for (const sel of tableSelectors) {
+                allRows = Array.from(document.querySelectorAll(sel));
+                if (allRows.length > 1) break;
+            }
+            const knownHeaders = ['url', 'destination', 'title', 'balise', 'état', 'longueur'];
+            let headerIdx = 0;
+            for (let i = 0; i < Math.min(allRows.length, 5); i++) {
+                const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
+                if (texts.some(t => knownHeaders.some(kw => t.includes(kw)))) { headerIdx = i; break; }
+            }
+            const rows = allRows.slice(headerIdx);
             const headers = Array.from(rows[0]?.children || []);
-            const colIdx = headers.findIndex(h => h.innerText.includes('État balise title'));
+            const colIdx = headers.findIndex(h => h.innerText.toLowerCase().includes('état') || h.innerText.toLowerCase().includes('balise title'));
             if (colIdx === -1) return;
 
             const tbody = document.querySelector('.waffle tbody') || document.querySelector('.waffle');
@@ -559,6 +674,9 @@ export async function captureSheetBaliseTitle(sheetUrl, auditId, googleCookies) 
 
             dataRows.sort((a, b) => parseInt(b.dataset.match) - parseInt(a.dataset.match));
             dataRows.forEach(tr => tbody.appendChild(tr));
+
+            // Hide overlay rows
+            for (let i = 0; i < headerIdx; i++) allRows[i].style.display = 'none';
         });
 
         await page.waitForTimeout(1000);

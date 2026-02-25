@@ -39,8 +39,9 @@ async function auditPageSpeed(url, auditId, strategy) {
         // ── 2. Extract the score from DOM — PROVEN METHOD ──
         const scores = await page.evaluate(() => {
             const data = {};
-            // Method 1: all gauges
+            // Method 1: all gauges (only visible)
             document.querySelectorAll('.lh-gauge').forEach(gauge => {
+                if (gauge.offsetParent === null) return; // Skip hidden gauges
                 const label = gauge.querySelector('.lh-gauge__label')?.innerText?.toLowerCase()?.trim();
                 const scoreText = gauge.querySelector('.lh-gauge__percentage')?.innerText;
                 if (label && scoreText) {
@@ -48,12 +49,14 @@ async function auditPageSpeed(url, auditId, strategy) {
                     if (!isNaN(n)) data[label] = n;
                 }
             });
-            // Method 2: specific performance gauge
+            // Method 2: specific performance gauge (first visible)
             if (!data['performance'] && !data['performances']) {
-                const el = document.querySelector('.lh-gauge__percentage');
-                if (el) {
-                    const n = parseInt(el.innerText.replace(/[^0-9]/g, ''), 10);
-                    if (!isNaN(n)) data['performance'] = n;
+                const els = document.querySelectorAll('.lh-gauge__percentage');
+                for (const el of els) {
+                    if (el.offsetParent !== null) { // only visible
+                        const n = parseInt(el.innerText.replace(/[^0-9]/g, ''), 10);
+                        if (!isNaN(n)) { data['performance'] = n; break; }
+                    }
                 }
             }
             return data;
@@ -108,9 +111,9 @@ async function auditPageSpeed(url, auditId, strategy) {
             await page.screenshot({ path: fullPath, fullPage: false });
         }
 
-        // ── 6. Crop: keep only top 55% (circle + 4 core metrics, cut filmstrip) ──
+        // ── 6. Crop: keep top 75% (original 55% + 20% more for the bottom) ──
         const meta = await sharp(fullPath).metadata();
-        const cropH = Math.floor(meta.height * 0.55);
+        const cropH = Math.floor(meta.height * 0.75);
         const croppedPath = fullPath.replace('.png', '_cropped.png');
 
         await sharp(fullPath)

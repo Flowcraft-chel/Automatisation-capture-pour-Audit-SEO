@@ -53,10 +53,9 @@ export async function auditSslLabs(domain, auditId) {
                     await new Promise(resolve => setTimeout(resolve, 30000));
                     continue;
                 } else if (err.response && err.response.status === 529) {
-                    console.log(`[MODULE-SSL] API overloaded (529), skipping module...`);
-                    result.statut = 'SKIP';
-                    result.grade = 'SSL Labs surchargé';
-                    return result;
+                    console.log(`[MODULE-SSL] API overloaded (529), waiting 60s before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, 60000));
+                    continue;
                 } else if (err.response && err.response.status >= 500) {
                     console.log(`[MODULE-SSL] Server error (${err.response.status}), waiting 15s before retry...`);
                 } else {

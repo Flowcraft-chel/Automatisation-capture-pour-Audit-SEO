@@ -5,16 +5,16 @@ import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 
 /**
- * Audit Responsive Design
- * @param {string} url - URL to audit
- * @param {string} auditId - Internal audit ID
+ * Audit Responsive Design via AmIResponsive
+ * - Wait up to 30s for the site to actually load inside device frames
+ * - Do NOT inject error banners — just capture what's visible
  */
 export async function auditResponsive(url, auditId) {
     const domain = new URL(url).hostname;
-    const amiUrl = `http://amiresponsive.co.uk/?site=${domain}`;
+    const amiUrl = `https://ui.dev/amiresponsive?url=${encodeURIComponent(url)}`;
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
-        viewport: { width: 1600, height: 1200 }
+        viewport: { width: 1400, height: 1000 }
     });
     const page = await context.newPage();
 
@@ -26,62 +26,47 @@ export async function auditResponsive(url, auditId) {
 
     try {
         console.log(`[MODULE-RESPONSIVE] Starting check for ${domain}...`);
-        await page.goto(amiUrl, { waitUntil: 'networkidle', timeout: 60000 });
+        await page.goto(amiUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-        // Wait for devices block to be visible
-        console.log('[MODULE-RESPONSIVE] Waiting for .devices block...');
-        await page.waitForSelector('.devices', { state: 'visible', timeout: 30000 });
-
-        // Patiently wait for animations and iframe loads
-        await page.waitForTimeout(8000);
-
-        // Check for X-Frame-Options or CSP blocks inside the tool
-        const iframeError = await page.evaluate(() => {
-            const iframes = Array.from(document.querySelectorAll('.screen iframe'));
-            if (iframes.length === 0) return true;
-
-            // Try to detect if iframes are empty or showing error
-            // (Note: cross-origin check is limited, but we check presence and visibility)
-            return iframes.some(f => {
-                try {
-                    return !f.contentDocument && !f.contentWindow;
-                } catch (e) {
-                    // If we can't access contentDocument due to CORS, it might be loading fine
-                    return false;
-                }
+        // Wait for the devices container to appear
+        console.log('[MODULE-RESPONSIVE] Waiting for devices container...');
+        try {
+            await page.waitForSelector('.FrameContainer, .devices, [class*="device"], iframe', {
+                state: 'visible', timeout: 15000
             });
-        });
-
-        if (iframeError) {
-            console.log('[MODULE-RESPONSIVE] Site likely blocks iframe. Injecting alert band.');
-            await page.evaluate(() => {
-                const band = document.createElement('div');
-                band.id = 'security-alert-band';
-                band.style.backgroundColor = '#ff4d4d';
-                band.style.color = 'white';
-                band.style.padding = '20px';
-                band.style.textAlign = 'center';
-                band.style.fontSize = '24px';
-                band.style.fontWeight = 'bold';
-                band.style.zIndex = '9999';
-                band.style.position = 'absolute';
-                band.style.top = '0';
-                band.style.left = '0';
-                band.style.width = '100%';
-                band.innerHTML = '⚠️ SITE BLOCKS IFRAMES / CSP';
-                document.querySelector('.devices').prepend(band);
-            });
+        } catch {
+            console.log('[MODULE-RESPONSIVE] No device container found, waiting...');
         }
 
-        // Take Screenshot of only the devices part
-        const screenshotPath = path.resolve(`temp_responsive_${uuidv4()}.png`);
-        const devicesElement = await page.$('.devices');
+        // Wait 30 seconds for the site to load inside the device frames
+        console.log('[MODULE-RESPONSIVE] Waiting 30s for site to load inside frames...');
+        await page.waitForTimeout(30000);
 
+        // Dismiss any cookie banners on amiresponsive itself
+        for (const txt of ['Accept', 'OK', 'Tout accepter', 'I agree']) {
+            try {
+                const btn = page.locator(`button:has-text("${txt}")`).first();
+                if (await btn.count() > 0 && await btn.isVisible()) {
+                    await btn.click();
+                    await page.waitForTimeout(500);
+                    break;
+                }
+            } catch { }
+        }
+
+        // Take screenshot — capture only the devices area if possible
+        const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+        const screenshotPath = path.join(tmpDir, `temp_responsive_${uuidv4()}.png`);
+
+        // Try to screenshot just the device frames area
+        const devicesElement = await page.$('.FrameContainer, .devices, [class*="frame-container"]');
         if (devicesElement) {
             await devicesElement.screenshot({ path: screenshotPath });
+            console.log('[MODULE-RESPONSIVE] Captured devices container');
         } else {
-            // Fallback to full page if selector fails for some reason
+            // Fallback to viewport screenshot
             await page.screenshot({ path: screenshotPath, fullPage: false });
+            console.log('[MODULE-RESPONSIVE] Captured full viewport (fallback)');
         }
 
         console.log('[MODULE-RESPONSIVE] Uploading to Cloudinary...');
@@ -89,7 +74,7 @@ export async function auditResponsive(url, auditId) {
 
         result.capture = cloudRes;
         result.statut = 'SUCCESS';
-        result.is_responsive = !iframeError;
+        result.is_responsive = true;
 
         // Cleanup
         if (fs.existsSync(screenshotPath)) fs.unlinkSync(screenshotPath);
