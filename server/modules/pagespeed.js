@@ -7,8 +7,15 @@ import { uploadToCloudinary } from '../utils/cloudinary.js';
 
 /**
  * Core PSI audit — shared for mobile & desktop.
- * Strategy: scrape the score from the DOM (proven method from original code),
- * then crop the top section of the .lh-category to get the performance circle + metrics.
+ * 
+ * Strategy:
+ * 1. Navigate to PageSpeed Insights with the correct form_factor
+ * 2. Wait for the gauge (score circle) to appear
+ * 3. Extract the performance score from the DOM
+ * 4. Hide everything BELOW the metrics section (Insights, Diagnostics, etc.)
+ *    → The capture must go from "Analysez les problèmes de performances" to just BEFORE "Statistiques"
+ * 5. Take a clean screenshot of just the performance overview + metrics
+ * 6. Upload to Cloudinary
  */
 async function auditPageSpeed(url, auditId, strategy) {
     const label = strategy.toUpperCase();
@@ -98,9 +105,54 @@ async function auditPageSpeed(url, auditId, strategy) {
             }
         } catch { }
 
-        // ── 5. Capture the performance section ──
-        const fullPath = path.resolve(`temp_psi_full_${strategy}_${uuidv4()}.png`);
+        // ── 5. HIDE everything below the metrics section ──
+        // The capture must show: Score circle + Metrics (FCP, LCP, TBT, CLS)
+        // Must NOT show: Insights, Diagnostics, Statistics, Filmstrip details, etc.
+        await page.evaluate(() => {
+            // Hide cookie banners
+            document.querySelectorAll('.glue-cookie-notification-bar, .glue-cookie-notification-bar-wrapper').forEach(el => el.style.display = 'none');
+
+            // Hide the insights/diagnostics/statistics sections
+            // These are typically after the metrics cards in .lh-category
+            const hideSelectors = [
+                '.lh-audit-group',          // All audit groups (Insights, Diagnostics)
+                '.lh-filmstrip',            // Filmstrip screenshots
+                '.lh-metrics-container ~ *', // Everything after metrics container
+                '.lh-clump',                // Clustered audit results
+                '[class*="insight"]',       // Any insight sections
+                '[class*="diagnostic"]',    // Any diagnostic sections  
+                '[class*="filmstrip"]',     // Filmstrip
+                '.lh-category > .lh-audit-group', // audit groups inside category
+            ];
+
+            for (const sel of hideSelectors) {
+                document.querySelectorAll(sel).forEach(el => {
+                    el.style.display = 'none';
+                });
+            }
+
+            // More aggressive: find the metrics section, hide everything after it
+            const metricsContainer = document.querySelector('.lh-metrics-container');
+            if (metricsContainer) {
+                let sibling = metricsContainer.nextElementSibling;
+                while (sibling) {
+                    sibling.style.display = 'none';
+                    sibling = sibling.nextElementSibling;
+                }
+            }
+
+            // Also hide headers/nav if present
+            document.querySelectorAll('header, nav, .header-section').forEach(el => el.style.display = 'none');
+        });
+
+        await page.waitForTimeout(1000);
+
+        // ── 6. Capture the performance section (Score + Metrics only) ──
+        const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+        const fullPath = path.join(tmpDir, `temp_psi_full_${strategy}_${uuidv4()}.png`);
+
         try {
+            // Try to screenshot just the .lh-category section (performance overview)
             const perfSection = page.locator('.lh-category >> visible=true').first();
             await perfSection.waitFor({ state: 'visible', timeout: 30000 });
             await perfSection.scrollIntoViewIfNeeded();
@@ -111,16 +163,18 @@ async function auditPageSpeed(url, auditId, strategy) {
             await page.screenshot({ path: fullPath, fullPage: false });
         }
 
-        // ── 6. Crop: keep top 75% (original 55% + 20% more for the bottom) ──
+        // ── 7. Smart crop with sharp: remove any remaining bottom padding ──
         const meta = await sharp(fullPath).metadata();
-        const cropH = Math.floor(meta.height * 0.75);
+        // Since we already hid excess sections, we just need a safety crop
+        // Keep at most 65% of the height (the score + metrics area)
+        const maxCropH = Math.min(meta.height, Math.floor(meta.height * 0.65));
         const croppedPath = fullPath.replace('.png', '_cropped.png');
 
         await sharp(fullPath)
-            .extract({ left: 0, top: 0, width: meta.width, height: cropH })
+            .extract({ left: 0, top: 0, width: meta.width, height: maxCropH })
             .toFile(croppedPath);
 
-        // ── 7. Upload cropped version ──
+        // ── 8. Upload cropped version ──
         const cloudRes = await uploadToCloudinary(croppedPath, `audit-results/psi-${strategy}-${auditId}`);
         result.capture = cloudRes;
         result.statut = 'SUCCESS';
