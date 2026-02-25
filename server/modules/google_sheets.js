@@ -230,14 +230,13 @@ export async function captureSheetImages(sheetUrl, auditId, googleCookies) {
         const found = await navigateToTab(page, 'Images');
         if (!found) { result.statut = 'SKIP'; result.details = 'Onglet Images introuvable'; return result; }
 
-        // Sort by Taille descending via JS (Sheets API or UI)
         await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr', 'table tr'];
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
             let allRows = [];
             for (const sel of tableSelectors) {
                 const elts = Array.from(document.querySelectorAll(sel));
                 // Exclude rows that belong to the header or tab bar
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
+                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
                 if (allRows.length > 1) break;
             }
             if (!allRows.length) return;
@@ -351,12 +350,12 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
 
             const hasRelevantData = await page.evaluate(({ colName }) => {
                 // Try multiple selectors for public + private views
-                const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr', 'table tr'];
+                const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
                 let allRows = [];
                 for (const sel of tableSelectors) {
                     const elts = Array.from(document.querySelectorAll(sel));
                     // Exclude rows that belong to the header or tab bar
-                    allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
+                    allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
                     if (allRows.length > 1) break;
                 }
                 if (allRows.length <= 1) return { found: false, reason: `No table rows (tried ${tableSelectors.join(', ')})` };
@@ -411,12 +410,12 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
             }
 
             await page.evaluate(({ colName, sortDir }) => {
-                const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr', 'table tr'];
+                const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
                 let allRows = [];
                 for (const sel of tableSelectors) {
                     const elts = Array.from(document.querySelectorAll(sel));
                     // Exclude rows that belong to the header or tab bar
-                    allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
+                    allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
                     if (allRows.length > 1) break;
                 }
 
@@ -506,11 +505,11 @@ export async function captureSheetMotsBody(sheetUrl, auditId, googleCookies) {
 
         // Sort Gravité décroissant, keep top 10
         await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr', 'table tr'];
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
             let allRows = [];
             for (const sel of tableSelectors) {
                 const elts = Array.from(document.querySelectorAll(sel));
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
+                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
                 if (allRows.length > 1) break;
             }
             if (!allRows.length) return;
@@ -572,11 +571,11 @@ export async function captureSheetMetaDesc(sheetUrl, auditId, googleCookies) {
         if (!found) { result.statut = 'SKIP'; result.details = 'Onglet Meta desc introuvable'; return result; }
 
         const hasZero = await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr', 'table tr'];
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
             let allRows = [];
             for (const sel of tableSelectors) {
                 const elts = Array.from(document.querySelectorAll(sel));
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
+                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
                 if (allRows.length > 1) break;
             }
             if (!allRows.length) return false;
@@ -601,11 +600,11 @@ export async function captureSheetMetaDesc(sheetUrl, auditId, googleCookies) {
 
         // Sort ascending — 0s come to top, hide non-zero rows
         await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr', 'table tr'];
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
             let allRows = [];
             for (const sel of tableSelectors) {
                 const elts = Array.from(document.querySelectorAll(sel));
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
+                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
                 if (allRows.length > 1) break;
             }
             if (!allRows.length) return;
@@ -655,11 +654,11 @@ export async function captureSheetBaliseTitle(sheetUrl, auditId, googleCookies) 
         if (!found) { result.statut = 'SKIP'; result.details = 'Onglet Balise title introuvable'; return result; }
 
         const hasTropLongue = await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr', 'table tr'];
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
             let allRows = [];
             for (const sel of tableSelectors) {
                 const elts = Array.from(document.querySelectorAll(sel));
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
+                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
                 if (allRows.length > 1) break;
             }
             if (!allRows.length) return false;
@@ -682,11 +681,11 @@ export async function captureSheetBaliseTitle(sheetUrl, auditId, googleCookies) 
 
         // Keeps and sorts 'trop longue' values
         await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr', 'table tr'];
+            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
             let allRows = [];
             for (const sel of tableSelectors) {
                 const elts = Array.from(document.querySelectorAll(sel));
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
+                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
                 if (allRows.length > 1) break;
             }
             if (!allRows.length) return;
