@@ -84,5 +84,13 @@ export async function initDb() {
   try { await db.exec('ALTER TABLE audit_steps ADD COLUMN updated_at DATETIME'); } catch (e) { }
   try { await db.exec('ALTER TABLE audit_steps ADD COLUMN resultat TEXT'); } catch (e) { }
 
+  // Seed default user if none exists (for Airtable Poller)
+  const userCount = await db.get('SELECT COUNT(*) as count FROM users');
+  if (userCount.count === 0) {
+    console.log('[DB] Seeding default admin user for Airtable integration...');
+    const { v4: uuidv4 } = await import('uuid');
+    await db.run('INSERT INTO users (id, email, password) VALUES (?, ?, ?)', [uuidv4(), 'admin@novek.ai', '']);
+  }
+
   return db;
 }
