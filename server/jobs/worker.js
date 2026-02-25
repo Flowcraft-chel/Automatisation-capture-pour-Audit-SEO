@@ -14,10 +14,11 @@ import {
     captureSheetBaliseTitle,
     capturePlanTab
 } from '../modules/google_sheets.js';
-import { captureGscSitemaps, captureGscHttps } from '../modules/google_search_console.js';
+import { captureGscSitemaps, captureGscHttps, captureGscPerformance, captureGscCoverage, captureGscTopPages } from '../modules/google_search_console.js';
 import { captureMrmProfondeur } from '../modules/mrm.js';
 import { captureUbersuggest } from '../modules/ubersuggest.js';
 import { captureSemrush, captureAhrefs } from '../modules/authority_checkers.js';
+import { check404 } from '../modules/check_404.js';
 import { updateAirtableStatut, updateAirtableField } from '../airtable.js';
 import { decrypt } from '../utils/encrypt.js';
 
@@ -339,6 +340,47 @@ export const initWorker = (io, db) => {
             const ahrRes = await captureAhrefs(siteUrl, auditId);
             await updateStep('ahrefs_authority', ahrRes.statut, ahrRes.details, ahrRes.capture);
             if (audit.airtable_record_id && ahrRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_AHREF', ahrRes.capture);
+
+            // STEP 14: 404 Check
+            await updateStep('check_404', 'EN_COURS');
+            const res404 = await check404(siteUrl, auditId);
+            await updateStep('check_404', res404.statut, res404.details, res404.capture);
+            if (audit.airtable_record_id) {
+                if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);
+                if (res404.lien404) await updateAirtableField(audit.airtable_record_id, 'lien_404', res404.lien404);
+            }
+
+            // STEP 15: GSC Performance (Traffic) — requires Google cookies
+            if (googleCookies) {
+                await updateStep('gsc_performance', 'EN_COURS');
+                const gscPerfRes = await captureGscPerformance(siteUrl, auditId, googleCookies);
+                await updateStep('gsc_performance', gscPerfRes.statut, gscPerfRes.details, gscPerfRes.capture1);
+                if (audit.airtable_record_id) {
+                    if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
+                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
+                    if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
+                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee brute gcs', gscPerfRes.capture2);
+                }
+
+                // STEP 16: GSC Coverage (Pages Indexed)
+                await updateStep('gsc_coverage', 'EN_COURS');
+                const gscCovRes = await captureGscCoverage(siteUrl, auditId, googleCookies);
+                await updateStep('gsc_coverage', gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
+                if (audit.airtable_record_id) {
+                    if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
+                    if (gscCovRes.pagesIndexed) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
+                }
+
+                // STEP 17: GSC Top Pages (Meilleures pages)
+                await updateStep('gsc_top_pages', 'EN_COURS');
+                const gscTopRes = await captureGscTopPages(siteUrl, auditId, googleCookies);
+                await updateStep('gsc_top_pages', gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
+                if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure page', gscTopRes.capture);
+            } else {
+                for (const k of ['gsc_performance', 'gsc_coverage', 'gsc_top_pages']) {
+                    await updateStep(k, 'SKIP', 'Session Google non connectée');
+                }
+            }
 
 
             // Global Success

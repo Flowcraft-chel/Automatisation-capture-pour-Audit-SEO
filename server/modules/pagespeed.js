@@ -108,10 +108,9 @@ async function auditPageSpeed(url, auditId, strategy) {
             await page.screenshot({ path: fullPath, fullPage: false });
         }
 
-        // ── 6. Crop: keep only top 45% (performance circle + core metrics) ──
-        //    This is the PROVEN method — simple percentage crop, no AI needed.
+        // ── 6. Crop: keep only top 55% (circle + 4 core metrics, cut filmstrip) ──
         const meta = await sharp(fullPath).metadata();
-        const cropH = Math.floor(meta.height * 0.45);
+        const cropH = Math.floor(meta.height * 0.55);
         const croppedPath = fullPath.replace('.png', '_cropped.png');
 
         await sharp(fullPath)

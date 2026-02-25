@@ -318,15 +318,27 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
             // RELOAD to ensure clean state before each column capture
             await page.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
             await page.addStyleTag({ content: SHEETS_HIDE_CSS });
+            await page.waitForTimeout(5000); // Wait for sheet data to render
             const tabOk = await navigateToTab(page, 'Balises H1-H6');
-            if (!tabOk) continue;
+            if (!tabOk) { console.log(`[SHEETS] H1-H6 tab not found after reload`); continue; }
+            await page.waitForTimeout(3000);
 
             const hasRelevantData = await page.evaluate(({ colName }) => {
-                const rows = Array.from(document.querySelectorAll('.waffle tr'));
+                // Try multiple selectors for public + private views
+                const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
+                let rows = [];
+                for (const sel of tableSelectors) {
+                    rows = Array.from(document.querySelectorAll(sel));
+                    if (rows.length > 1) break;
+                }
+                if (rows.length <= 1) return { found: false, reason: `No table rows (tried ${tableSelectors.join(', ')})` };
+
                 const headers = Array.from(rows[0]?.children || []);
-                const colIdx = headers.findIndex(h => h.innerText.trim().toLowerCase().includes(colName.toLowerCase()));
-                if (colIdx === -1) return false;
-                return rows.slice(1).some(tr => {
+                const headerTexts = headers.map(h => h.innerText.trim().toLowerCase());
+                const colIdx = headerTexts.findIndex(h => h.includes(colName.toLowerCase()));
+                if (colIdx === -1) return { found: false, reason: `Column "${colName}" not found in headers: [${headerTexts.join(', ')}]` };
+
+                const hasData = rows.slice(1).some(tr => {
                     const val = (tr.children[colIdx]?.innerText || '').toLowerCase().trim();
                     if (colName === 'Sauts de niveau entre les Hn') {
                         const n = parseFloat(val); return !isNaN(n) && n !== 0;
@@ -336,24 +348,32 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
                         return val === 'oui';
                     }
                 });
+                return { found: true, hasData, rowCount: rows.length - 1 };
             }, { colName: col });
 
-            if (!hasRelevantData) {
-                console.log(`[SHEETS] Skipping ${col}: aucune donnée pertinente trouvée`);
-                results[field] = { statut: 'SKIP', details: `Aucun "oui" dans ${col}` };
+            console.log(`[SHEETS] H1-H6 "${col}": ${JSON.stringify(hasRelevantData)}`);
+
+            if (!hasRelevantData.found || !hasRelevantData.hasData) {
+                const reason = hasRelevantData.reason || `Aucun "oui" dans ${col} (${hasRelevantData.rowCount || 0} lignes)`;
+                console.log(`[SHEETS] Skipping ${col}: ${reason}`);
+                results[field] = { statut: 'SKIP', details: reason };
                 continue;
             }
 
             await page.evaluate(({ colName, sortDir }) => {
-                const rows = Array.from(document.querySelectorAll('.waffle tr'));
+                const tableSelectors = ['.waffle tbody tr', '.waffle tr', 'table tr', '#sheets-viewport tr'];
+                let rows = [];
+                for (const sel of tableSelectors) {
+                    rows = Array.from(document.querySelectorAll(sel));
+                    if (rows.length > 1) break;
+                }
                 const headers = Array.from(rows[0]?.children || []);
                 const colIdx = headers.findIndex(h => h.innerText.trim().toLowerCase().includes(colName.toLowerCase()));
                 if (colIdx === -1) return;
 
-                const tbody = document.querySelector('.waffle tbody') || document.querySelector('.waffle');
+                const tbody = rows[0]?.parentElement || document.querySelector('.waffle tbody') || document.querySelector('.waffle');
                 const dataRows = rows.slice(1);
 
-                // Hide rows where col value doesn't match and prepare values for sorting
                 dataRows.forEach(tr => {
                     const val = (tr.children[colIdx]?.innerText || '').toLowerCase().trim();
                     const numeric = parseFloat(val);
@@ -377,21 +397,19 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
                 }
                 dataRows.forEach(tr => tbody.appendChild(tr));
 
-                // Hide columns instead of deleting them (non-destructive)
+                // Keep only URL column (0) + the checked column
                 const keepIdx = [0, colIdx];
-                Array.from(document.querySelectorAll('.waffle tr')).forEach((tr) => {
-                    const cells = Array.from(tr.children);
-                    cells.forEach((td, idx) => {
-                        if (!keepIdx.includes(idx)) {
-                            td.style.display = 'none';
-                        }
+                rows.forEach(tr => {
+                    Array.from(tr.children).forEach((td, idx) => {
+                        if (!keepIdx.includes(idx)) td.style.display = 'none';
                     });
                 });
             }, { colName: col, sortDir: sort });
 
             await page.waitForTimeout(1000);
-            const tmpPath = path.resolve(`temp_sheet_h1_${uuidv4()}.png`);
-            await page.screenshot({ path: tmpPath });
+            const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+            const tmpPath = path.join(tmpDir, `temp_sheet_h1_${uuidv4()}.png`);
+            await page.screenshot({ path: tmpPath, fullPage: false });
 
             const prompt = `${SHEET_CROP_PROMPT}
 Vérifie qu'aucune ligne contenant "non" n'apparaît dans la colonne "${col}". Si des "non" sont visibles en bas, rogne pour les exclure.`;

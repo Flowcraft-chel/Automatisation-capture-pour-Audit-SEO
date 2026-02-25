@@ -286,7 +286,10 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             // Phase 5: Authenticated sessions
             'mrm_profondeur', 'ubersuggest_da',
             // Phase 6: Anti-bot crawls
-            'semrush_authority', 'ahrefs_authority'
+            'semrush_authority', 'ahrefs_authority',
+            // Phase 7: Additional checks
+            'check_404',
+            'gsc_performance', 'gsc_coverage', 'gsc_top_pages'
         ];
 
         for (const stepKey of steps) {

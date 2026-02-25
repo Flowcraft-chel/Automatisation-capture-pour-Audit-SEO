@@ -238,15 +238,36 @@ export async function captureAhrefs(siteUrl, auditId) {
             await page.keyboard.press('Enter');
         }
 
-        console.log('[AHREFS] Waiting for results...');
-        await page.waitForTimeout(10000);
+        console.log('[AHREFS] Waiting for results to load...');
 
-        // Re-check Turnstile after submit
-        await handleTurnstile();
-        await page.waitForTimeout(8000);
+        // Wait for results - look for Domain Rating card
+        let resultsLoaded = false;
+        try {
+            await page.waitForSelector('text=Domain Rating, text=Rang du domaine, text=Authority Score, .css-1jv9nkd', {
+                timeout: 30000
+            });
+            resultsLoaded = true;
+            console.log('[AHREFS] Results loaded!');
+        } catch {
+            console.warn('[AHREFS] Results did not load (probable CAPTCHA). Re-trying Turnstile...');
+            await handleTurnstile();
+            await page.waitForTimeout(10000);
+
+            // 2nd attempt: check again
+            try {
+                const dr = await page.locator('text=Domain Rating, text=Rang du domaine').first();
+                if (await dr.count() > 0) resultsLoaded = true;
+            } catch { }
+        }
+
+        if (!resultsLoaded) {
+            console.warn('[AHREFS] ⚠️ Results still not visible. Capturing page as-is.');
+        }
+        await page.waitForTimeout(3000);
 
         // ── Screenshot and crop ──────────────────────────────────────────────
-        const tmpPath = path.resolve(`temp_ahrefs_${uuidv4()}.png`);
+        const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+        const tmpPath = path.join(tmpDir, `temp_ahrefs_${uuidv4()}.png`);
         await page.screenshot({ path: tmpPath, fullPage: false });
         console.log('[AHREFS] Screenshot taken');
 
