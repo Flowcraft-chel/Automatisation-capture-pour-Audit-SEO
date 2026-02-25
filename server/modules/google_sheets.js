@@ -329,6 +329,15 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
         const found = await navigateToTab(page, 'Balises H1-H6');
         if (!found) return results;
 
+        // CRITICAL: Wait for the grid to fully render after tab navigation
+        try {
+            await page.waitForSelector('.waffle tbody tr', { state: 'attached', timeout: 20000 });
+            console.log('[SHEETS] H1-H6 grid loaded successfully');
+        } catch (e) {
+            console.log('[SHEETS] H1-H6: .waffle grid not found after tab navigation, aborting');
+            return results;
+        }
+
         // Each sub-capture: check if column has 'oui' values, then filter & capture
         const columns = [
             { col: 'H1 absente', field: 'Img_balise_h1_absente', sort: 'asc' },
@@ -354,6 +363,8 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
                     }
                 }
             });
+            // Re-apply CSS to hide toolbars etc.
+            await page.addStyleTag({ content: SHEETS_HIDE_CSS });
             await page.waitForTimeout(1000);
 
             // We must wait for the grid to rebuild after tab click/reload
