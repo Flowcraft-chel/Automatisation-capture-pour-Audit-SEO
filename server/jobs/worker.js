@@ -19,6 +19,7 @@ import { captureMrmProfondeur } from '../modules/mrm.js';
 import { captureUbersuggest } from '../modules/ubersuggest.js';
 import { captureSemrush, captureAhrefs } from '../modules/authority_checkers.js';
 import { check404 } from '../modules/check_404.js';
+import { captureMajesticBacklinks } from '../modules/majestic.js';
 import { updateAirtableStatut, updateAirtableField } from '../airtable.js';
 import { decrypt } from '../utils/encrypt.js';
 
@@ -381,6 +382,12 @@ export const initWorker = (io, db) => {
                     await updateStep(k, 'SKIP', 'Session Google non connectée');
                 }
             }
+
+            // STEP 18: Majestic Backlinks
+            await updateStep('majestic_backlinks', 'EN_COURS');
+            const majRes = await captureMajesticBacklinks(siteUrl, auditId);
+            await updateStep('majestic_backlinks', majRes.statut, majRes.details, majRes.capture);
+            if (audit.airtable_record_id && majRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_BACKLINKS', majRes.capture);
 
 
             // Global Success

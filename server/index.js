@@ -289,7 +289,8 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             'semrush_authority', 'ahrefs_authority',
             // Phase 7: Additional checks
             'check_404',
-            'gsc_performance', 'gsc_coverage', 'gsc_top_pages'
+            'gsc_performance', 'gsc_coverage', 'gsc_top_pages',
+            'majestic_backlinks'
         ];
 
         for (const stepKey of steps) {
