@@ -348,6 +348,9 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
             if (!tabOk) { console.log(`[SHEETS] H1-H6 tab not found after reload`); continue; }
             await page.waitForTimeout(3000);
 
+            // We must wait for the grid to rebuild after tab click/reload
+            try { await page.waitForSelector('.waffle tbody tr', { state: 'attached', timeout: 15000 }); } catch (e) { console.log('[SHEETS] .waffle not found, proceeding anyway'); }
+
             const hasRelevantData = await page.evaluate(({ colName }) => {
                 // Try multiple selectors for public + private views
                 const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
@@ -570,33 +573,8 @@ export async function captureSheetMetaDesc(sheetUrl, auditId, googleCookies) {
         const found = await navigateToTab(page, 'Meta desc');
         if (!found) { result.statut = 'SKIP'; result.details = 'Onglet Meta desc introuvable'; return result; }
 
-        const hasZero = await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
-            let allRows = [];
-            for (const sel of tableSelectors) {
-                const elts = Array.from(document.querySelectorAll(sel));
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
-                if (allRows.length > 1) break;
-            }
-            if (!allRows.length) return false;
-            // Find real header row
-            const knownHeaders = ['url', 'destination', 'meta', 'description', 'caractère', 'nb', 'longueur'];
-            let headerIdx = 0;
-            for (let i = 0; i < Math.min(allRows.length, 5); i++) {
-                const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
-                if (texts.some(t => knownHeaders.some(kw => t.includes(kw)))) { headerIdx = i; break; }
-            }
-            const rows = allRows.slice(headerIdx);
-            const headers = Array.from(rows[0]?.children || []);
-            const colIdx = headers.findIndex(h => h.innerText.toLowerCase().includes('nb de caractères') || h.innerText.toLowerCase().includes('caractère'));
-            if (colIdx === -1) return false;
-            return rows.slice(1).some(tr => {
-                const v = parseFloat(tr.children[colIdx]?.innerText || '999');
-                return v === 0;
-            });
-        });
-
-        if (!hasZero) { result.statut = 'SKIP'; result.details = 'Aucune meta description vide'; return result; }
+        // We must wait for the grid
+        try { await page.waitForSelector('.waffle tbody tr', { state: 'attached', timeout: 10000 }); } catch (e) { }
 
         // Sort ascending — 0s come to top, hide non-zero rows
         await page.evaluate(() => {
@@ -626,7 +604,18 @@ export async function captureSheetMetaDesc(sheetUrl, auditId, googleCookies) {
             dataRows.forEach(tr => {
                 const v = parseFloat(tr.children[colIdx]?.innerText || '999');
                 tr.dataset.val = isNaN(v) ? 999 : v;
-                tr.style.display = v === 0 ? '' : 'none';
+                // If there are zero values, hide non-zero, but we'll show at least 5 rows if there are NO 0s to prove it's clean
+            });
+
+            const zeroCount = dataRows.filter(tr => parseFloat(tr.dataset.val) === 0).length;
+
+            dataRows.forEach((tr, i) => {
+                if (zeroCount > 0) {
+                    tr.style.display = parseFloat(tr.dataset.val) === 0 ? '' : 'none';
+                } else {
+                    // NO 0s found! Show the first 5 rows to provide proof
+                    tr.style.display = i < 5 ? '' : 'none';
+                }
             });
 
             dataRows.sort((a, b) => parseFloat(a.dataset.val) - parseFloat(b.dataset.val));
@@ -653,31 +642,8 @@ export async function captureSheetBaliseTitle(sheetUrl, auditId, googleCookies) 
         const found = await navigateToTab(page, 'Balise title');
         if (!found) { result.statut = 'SKIP'; result.details = 'Onglet Balise title introuvable'; return result; }
 
-        const hasTropLongue = await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
-            let allRows = [];
-            for (const sel of tableSelectors) {
-                const elts = Array.from(document.querySelectorAll(sel));
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar') && !el.closest('.docs-titlebar-buttons'));
-                if (allRows.length > 1) break;
-            }
-            if (!allRows.length) return false;
-            const knownHeaders = ['url', 'destination', 'title', 'balise', 'état', 'longueur'];
-            let headerIdx = 0;
-            for (let i = 0; i < Math.min(allRows.length, 5); i++) {
-                const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
-                if (texts.some(t => knownHeaders.some(kw => t.includes(kw)))) { headerIdx = i; break; }
-            }
-            const rows = allRows.slice(headerIdx);
-            const headers = Array.from(rows[0]?.children || []);
-            const colIdx = headers.findIndex(h => h.innerText.toLowerCase().includes('état') || h.innerText.toLowerCase().includes('balise title'));
-            if (colIdx === -1) return false;
-            return rows.slice(1).some(tr =>
-                (tr.children[colIdx]?.innerText || '').toLowerCase().includes('trop longue')
-            );
-        });
-
-        if (!hasTropLongue) { result.statut = 'SKIP'; result.details = 'Aucune balise title trop longue'; return result; }
+        // We must wait for the grid
+        try { await page.waitForSelector('.waffle tbody tr', { state: 'attached', timeout: 10000 }); } catch (e) { }
 
         // Keeps and sorts 'trop longue' values
         await page.evaluate(() => {
@@ -708,7 +674,17 @@ export async function captureSheetBaliseTitle(sheetUrl, auditId, googleCookies) 
                 const v = (tr.children[colIdx]?.innerText || '').toLowerCase();
                 const match = v.includes('trop longue');
                 tr.dataset.match = match ? 1 : 0;
-                tr.style.display = match ? '' : 'none';
+            });
+
+            const matchCount = dataRows.filter(tr => parseInt(tr.dataset.match) === 1).length;
+
+            dataRows.forEach((tr, i) => {
+                if (matchCount > 0) {
+                    tr.style.display = parseInt(tr.dataset.match) === 1 ? '' : 'none';
+                } else {
+                    // Provide proof that everything is fine (show 5 first rows)
+                    tr.style.display = i < 5 ? '' : 'none';
+                }
             });
 
             dataRows.sort((a, b) => parseInt(b.dataset.match) - parseInt(a.dataset.match));
