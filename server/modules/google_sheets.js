@@ -340,13 +340,21 @@ export async function captureSheetH1H6(sheetUrl, auditId, googleCookies) {
         ];
 
         for (const { col, field, sort } of columns) {
-            // RELOAD to ensure clean state before each column capture
-            await page.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
-            await page.addStyleTag({ content: SHEETS_HIDE_CSS });
-            await page.waitForTimeout(5000); // Wait for sheet data to render
-            const tabOk = await navigateToTab(page, 'Balises H1-H6');
-            if (!tabOk) { console.log(`[SHEETS] H1-H6 tab not found after reload`); continue; }
-            await page.waitForTimeout(3000);
+            // Re-show all rows and columns instead of doing a full page reload!
+            await page.evaluate(() => {
+                const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
+                for (const sel of tableSelectors) {
+                    const rows = Array.from(document.querySelectorAll(sel));
+                    if (rows.length > 0) {
+                        rows.forEach(tr => {
+                            tr.style.display = '';
+                            Array.from(tr.children).forEach(td => td.style.display = '');
+                        });
+                        break;
+                    }
+                }
+            });
+            await page.waitForTimeout(1000);
 
             // We must wait for the grid to rebuild after tab click/reload
             try { await page.waitForSelector('.waffle tbody tr', { state: 'attached', timeout: 15000 }); } catch (e) { console.log('[SHEETS] .waffle not found, proceeding anyway'); }
