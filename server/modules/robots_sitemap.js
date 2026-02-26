@@ -1,237 +1,217 @@
+/**
+ * robots_sitemap.js
+ * Version restaurée avec rognage IA et fond blanc pour une visibilité maximale.
+ * Gère plusieurs sitemaps, les fallbacks et évite les crashs sur XML/Text.
+ */
 import { chromium } from 'playwright';
-import { uploadBufferToCloudinary } from '../utils/cloudinary.js';
 import sharp from 'sharp';
+import fs from 'fs';
+import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { uploadBufferToCloudinary } from '../utils/cloudinary.js';
+import { analyzeImage } from '../utils/openai.js';
 
 /**
- * Audit robots.txt and capture evidence.
- * 
- * PROGRAMMATIC CROP (no AI dependency):
- * 1. Open robots.txt → apply dark professional CSS
- * 2. Highlight Sitemap lines in blue
- * 3. Measure actual text content dimensions in the browser
- * 4. Crop programmatically with sharp based on measured dimensions
- * 5. Same for sitemap page
- */
-/**
- * Audit robots.txt et capture des preuves.
+ * Audit robots.txt and detect sitemap(s).
+ * Ensure a capture is ALWAYS generated even if no sitemap is found.
  */
 export async function auditRobotsSitemap(url, auditId) {
     console.log(`[MODULE-ROBOTS] Début de l'audit pour : ${url}`);
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-        viewport: { width: 1400, height: 900 }
-    });
-    const page = await context.newPage();
 
+    const browser = await chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    // Viewport standard pour une capture lisible
+    const context = await browser.newContext({
+        viewport: { width: 1400, height: 900 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    });
+
+    const page = await context.newPage();
     let robotsUrl = url.endsWith('/') ? `${url}robots.txt` : `${url}/robots.txt`;
+
     const robotsResult = {
         robots_txt: { statut: 'EN_COURS', capture: null, url: robotsUrl },
         sitemap: { statut: 'EN_ATTENTE', url: null, capture: null }
     };
 
     try {
-        // --- ÉTAPE 1 : robots.txt ---
         console.log(`[MODULE-ROBOTS] Navigation vers : ${robotsUrl}`);
-        const robotsResponse = await page.goto(robotsUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        const response = await page.goto(robotsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        if (!robotsResponse || robotsResponse.status() >= 400) {
+        if (!response || response.status() >= 400) {
             robotsResult.robots_txt.statut = 'ERROR';
-            robotsResult.robots_txt.details = `Erreur HTTP : ${robotsResponse ? robotsResponse.status() : 'Pas de réponse'}`;
+            robotsResult.robots_txt.details = `Erreur HTTP: ${response ? response.status() : 'Pas de réponse'}`;
         } else {
-            // Récupération du texte brut
-            const rawText = await page.evaluate(() => document.body ? (document.body.textContent || document.body.innerText || '') : '');
-            const lines = rawText.split('\n').filter(l => l.trim().length > 0);
-            console.log(`[MODULE-ROBOTS] ${lines.length} lignes trouvées dans robots.txt`);
+            robotsResult.robots_txt.statut = 'SUCCESS';
 
-            // Recherche des lignes Sitemap
-            const sitemapLines = [];
-            const allSitemapUrls = [];
-            lines.forEach((line, idx) => {
-                if (line.toLowerCase().includes('sitemap:')) {
-                    sitemapLines.push(idx);
-                    const match = line.match(/sitemaps?:\s*(https?:\/\/\S+)/i);
-                    if (match) allSitemapUrls.push(match[1]);
-                }
+            // 1. Analyse du contenu pour les sitemaps
+            const sitemapInfo = await page.evaluate(() => {
+                const body = document.body;
+                if (!body) return { hasSitemap: false, lines: [], firstUrl: null };
+
+                const text = body.textContent || body.innerText || "";
+                const lines = text.split('\n');
+                const sitemaps = [];
+                let firstUrl = null;
+
+                lines.forEach((line, idx) => {
+                    const cleanLine = line.trim();
+                    if (cleanLine.toLowerCase().startsWith('sitemap:')) {
+                        const match = cleanLine.match(/sitemaps?:\s*(https?:\/\/\S+)/i);
+                        if (match) {
+                            if (!firstUrl) firstUrl = match[1];
+                            sitemaps.push({ index: idx, text: cleanLine });
+                        }
+                    }
+                });
+                return { hasSitemap: sitemaps.length > 0, lines: sitemaps, firstUrl };
             });
 
-            if (allSitemapUrls.length > 0) {
-                robotsResult.sitemap.url = allSitemapUrls[0];
-                robotsResult.sitemap.allUrls = allSitemapUrls;
-                robotsResult.sitemap.statut = 'EN_COURS';
-                console.log(`[MODULE-ROBOTS] ${allSitemapUrls.length} sitemaps trouvés. Principal : ${allSitemapUrls[0]}`);
-            } else {
-                // Fallback : Test des URLs sitemap standards
-                const baseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-                console.log(`[MODULE-ROBOTS] Aucun sitemap dans robots.txt. Test des fallbacks...`);
+            console.log(`[MODULE-ROBOTS] ${sitemapInfo.lines.length} sitemaps trouvés.`);
 
-                for (const fallback of [`${baseUrl}/sitemap.xml`, `${baseUrl}/sitemap_index.xml`]) {
-                    try {
-                        const check = await page.goto(fallback, { waitUntil: 'domcontentloaded', timeout: 10000 });
-                        if (check && check.status() < 400) {
-                            robotsResult.sitemap.url = fallback;
-                            robotsResult.sitemap.statut = 'EN_COURS';
-                            console.log(`[MODULE-ROBOTS] Sitemap trouvé via fallback : ${fallback}`);
-                            break;
-                        }
-                    } catch { }
-                }
-            }
-
-            // Reconstruction de la page avec un style pro et mise en évidence
-            const contentDimensions = await page.evaluate((sitemapLineIndices) => {
-                if (!document.body) {
-                    const body = document.createElement('body');
-                    document.documentElement.appendChild(body);
-                }
-                const text = document.body.textContent || document.body.innerText || '';
+            // 2. Stylisation (Fond Blanc, Texte Noir, Sitemaps Jaunes)
+            await page.evaluate((sitemapIndices) => {
+                if (!document.body) return;
+                const text = document.body.textContent || "";
                 const lines = text.split('\n');
 
                 document.body.innerHTML = '';
-                document.body.style.cssText = 'background: #0d1117; margin: 0; padding: 0; overflow: hidden;';
+                document.body.style.cssText = 'background: white !important; margin: 0; padding: 40px !important; color: black !important; font-family: monospace; font-size: 16px; line-height: 1.5;';
 
                 const container = document.createElement('div');
-                container.id = 'robots-content';
-                container.style.cssText = `
-                    padding: 30px 40px;
-                    font-family: 'Fira Code', 'Courier New', monospace;
-                    font-size: 16px;
-                    line-height: 1.7;
-                    color: #c9d1d9;
-                    background: #0d1117;
-                    display: inline-block;
-                    min-width: 400px;
-                `;
-
                 lines.forEach((line, idx) => {
-                    if (line.trim().length === 0 && idx > 0) return;
                     const div = document.createElement('div');
-                    div.textContent = line;
-
-                    if (sitemapLineIndices.includes(idx)) {
-                        div.style.cssText = `
-                            background: rgba(56, 139, 253, 0.25);
-                            border-left: 4px solid #58a6ff;
-                            padding: 6px 12px;
-                            margin: 6px 0;
-                            border-radius: 4px;
-                            font-weight: bold;
-                            color: #ffffff;
-                        `;
-                    } else if (line.trim().startsWith('#')) {
-                        div.style.cssText = 'color: #6e7681; padding: 2px 0;';
-                    } else if (line.toLowerCase().startsWith('user-agent')) {
-                        div.style.cssText = 'color: #ff7b72; padding: 2px 0; font-weight: bold;';
-                    } else if (line.toLowerCase().startsWith('allow') || line.toLowerCase().startsWith('disallow')) {
-                        div.style.cssText = 'color: #7ee787; padding: 2px 0;';
+                    div.textContent = line || ' ';
+                    if (sitemapIndices.includes(idx)) {
+                        div.style.cssText = 'background: #fff3cd !important; border-left: 5px solid #ffc107 !important; padding: 5px 15px !important; margin: 5px 0 !important; font-weight: bold; color: black !important;';
                     } else {
-                        div.style.cssText = 'padding: 2px 0;';
+                        div.style.padding = '2px 0';
                     }
                     container.appendChild(div);
                 });
-
                 document.body.appendChild(container);
-                const rect = container.getBoundingClientRect();
-                return { width: Math.ceil(rect.width) + 20, height: Math.ceil(rect.height) + 20 };
-            }, sitemapLines);
+            }, sitemapInfo.lines.map(l => l.index));
 
+            await page.waitForTimeout(1000);
             const robotsBuffer = await page.screenshot({ fullPage: false });
-            const meta = await sharp(robotsBuffer).metadata();
-            const finalWidth = Math.min(Math.max(contentDimensions.width, 400), meta.width);
-            const finalHeight = Math.min(Math.max(contentDimensions.height, 100), meta.height);
+            const robotsRawUrl = await uploadBufferToCloudinary(robotsBuffer, `robots-raw-${auditId}.png`, 'audit-temp');
 
-            const robotsFinalBuffer = await sharp(robotsBuffer)
-                .extract({ left: 0, top: 0, width: finalWidth, height: finalHeight })
-                .toBuffer();
+            // 3. Rognage IA
+            const prompt = `Cette image montre un fichier robots.txt. Les lignes de type Sitemap sont surlignées en jaune.
+RÈGLES DE ROGNAGE :
+1. CONSERVE TOUTES les lignes de texte visibles.
+2. Supprime l'espace vide blanc à droite et en bas.
+3. La largeur doit être ajustée au texte le plus long.
+Réponds UNIQUEMENT avec : CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
-            robotsResult.robots_txt.capture = await uploadBufferToCloudinary(
-                robotsFinalBuffer, `robots-final-${auditId}.png`, 'audit-captures'
-            );
-            robotsResult.robots_txt.statut = 'SUCCESS';
-        }
+            const aiRes = await analyzeImage(robotsRawUrl, prompt);
+            const match = aiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
 
-        // --- ÉTAPE 2 : Capture du Sitemap ---
-        console.log(`[MODULE-ROBOTS] Navigation vers Sitemap : ${robotsResult.sitemap.url || 'NON DÉTECTÉ'}`);
-        try {
-            if (robotsResult.sitemap.url) {
-                await page.goto(robotsResult.sitemap.url, { waitUntil: 'networkidle', timeout: 30000 });
+            if (match) {
+                let [_, rx, ry, rw, rh] = match.map(Number);
+                const meta = await sharp(robotsBuffer).metadata();
+                rx = Math.max(0, rx); ry = Math.max(0, ry);
+                rw = Math.min(rw, meta.width - rx); rh = Math.min(rh, meta.height - ry);
+
+                if (rw > 50 && rh > 20) {
+                    const finalBuffer = await sharp(robotsBuffer).extract({ left: rx, top: ry, width: rw, height: rh }).toBuffer();
+                    robotsResult.robots_txt.capture = await uploadBufferToCloudinary(finalBuffer, `robots-final-${auditId}.png`, 'audit-captures');
+                } else {
+                    robotsResult.robots_txt.capture = robotsRawUrl;
+                }
             } else {
-                // Page d'erreur personnalisée si aucun sitemap n'est trouvé
-                await page.setContent(`
-                    <body style="background: #0d1117; color: #ff7b72; font-family: monospace; padding: 50px; text-align: center;">
-                        <h1 style="border-bottom: 1px solid #30363d; padding-bottom: 20px;">⚠️ Sitemap non détecté</h1>
-                        <p style="font-size: 18px; color: #c9d1d9;">Aucun lien sitemap n'a été trouvé dans robots.txt ni via fallback.</p>
-                    </body>
-                `);
+                robotsResult.robots_txt.capture = robotsRawUrl;
             }
 
-            const sitemapDimensions = await page.evaluate(() => {
-                if (!document.body) {
-                    const body = document.createElement('body');
-                    document.documentElement.appendChild(body);
-                }
-                const text = document.body.textContent || document.body.innerText || '';
-                const lines = text.split('\n');
+            if (sitemapInfo.firstUrl) robotsResult.sitemap.url = sitemapInfo.firstUrl;
+        }
 
-                document.body.innerHTML = '';
-                document.body.style.cssText = 'background: #0d1117; margin: 0; padding: 0; overflow: hidden;';
-
-                const container = document.createElement('div');
-                container.style.cssText = `
-                    padding: 30px 40px;
-                    font-family: 'Fira Code', 'Courier New', monospace;
-                    font-size: 14px;
-                    line-height: 1.5;
-                    color: #c9d1d9;
-                    background: #0d1117;
-                    display: inline-block;
-                    min-width: 400px;
-                `;
-
-                if (document.querySelector('h1')) {
-                    container.innerHTML = document.body.innerHTML;
-                } else {
-                    const maxLines = Math.min(lines.length, 40);
-                    for (let i = 0; i < maxLines; i++) {
-                        const div = document.createElement('div');
-                        div.textContent = lines[i];
-                        if (lines[i].trim().startsWith('<') || lines[i].includes('://')) {
-                            div.style.color = '#79c0ff';
-                        }
-                        container.appendChild(div);
+        // --- STAGE 2: Sitemap Navigation & Capture ---
+        if (!robotsResult.sitemap.url) {
+            console.log("[MODULE-ROBOTS] Pas de sitemap direct. Test des fallbacks...");
+            const fallbacks = [`${url}/sitemap.xml`, `${url}/sitemap_index.xml`];
+            for (const fb of fallbacks) {
+                try {
+                    const res = await page.goto(fb, { timeout: 10000 });
+                    if (res && res.status() < 400) {
+                        robotsResult.sitemap.url = fb;
+                        break;
                     }
+                } catch { }
+            }
+        }
+
+        if (robotsResult.sitemap.url) {
+            console.log(`[MODULE-ROBOTS] Capture Sitemap : ${robotsResult.sitemap.url}`);
+            try {
+                await page.goto(robotsResult.sitemap.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+                await page.evaluate(() => {
+                    if (!document.body) return;
+                    const text = document.body.textContent || "";
+                    document.body.innerHTML = '';
+                    document.body.style.cssText = 'background: white !important; color: black !important; padding: 40px !important; font-family: monospace; font-size: 14px; white-space: pre-wrap;';
+                    document.body.textContent = text.split('\n').slice(0, 40).join('\n');
+                });
+
+                await page.waitForTimeout(1000);
+                const sitemapBuffer = await page.screenshot({ fullPage: false });
+                const sitemapRawUrl = await uploadBufferToCloudinary(sitemapBuffer, `sitemap-raw-${auditId}.png`, 'audit-temp');
+
+                const sPrompt = `Cette image montre un sitemap.
+RÈGLES DE ROGNAGE :
+1. Garde le texte utile (URLs).
+2. Supprime l'espace blanc à droite et en bas.
+CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
+
+                const sAiRes = await analyzeImage(sitemapRawUrl, sPrompt);
+                const sMatch = sAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
+
+                if (sMatch) {
+                    let [_, sx, sy, sw, sh] = sMatch.map(Number);
+                    const smeta = await sharp(sitemapBuffer).metadata();
+                    sx = Math.max(0, sx); sy = Math.max(0, sy);
+                    sw = Math.min(sw, smeta.width - sx); sh = Math.min(sh, smeta.height - sy);
+
+                    if (sw > 50 && sh > 20) {
+                        const sFinal = await sharp(sitemapBuffer).extract({ left: sx, top: sy, width: sw, height: sh }).toBuffer();
+                        robotsResult.sitemap.capture = await uploadBufferToCloudinary(sFinal, `sitemap-final-${auditId}.png`, 'audit-captures');
+                        robotsResult.sitemap.statut = 'SUCCESS';
+                    } else {
+                        robotsResult.sitemap.capture = sitemapRawUrl;
+                        robotsResult.sitemap.statut = 'SUCCESS';
+                    }
+                } else {
+                    robotsResult.sitemap.capture = sitemapRawUrl;
+                    robotsResult.sitemap.statut = 'SUCCESS';
                 }
-
-                document.body.appendChild(container);
-                const rect = container.getBoundingClientRect();
-                return { width: Math.ceil(rect.width) + 20, height: Math.ceil(rect.height) + 20 };
-            });
-
-            await page.waitForTimeout(500);
-            const sitemapBuffer = await page.screenshot({ fullPage: false });
-            const sMeta = await sharp(sitemapBuffer).metadata();
-            const sWidth = Math.min(Math.max(sitemapDimensions.width, 400), sMeta.width);
-            const sHeight = Math.min(Math.max(sitemapDimensions.height, 100), sMeta.height);
-
-            const sFinalBuffer = await sharp(sitemapBuffer)
-                .extract({ left: 0, top: 0, width: sWidth, height: sHeight })
-                .toBuffer();
-
-            robotsResult.sitemap.capture = await uploadBufferToCloudinary(
-                sFinalBuffer, `sitemap-final-${auditId}.png`, 'audit-captures'
-            );
-            robotsResult.sitemap.statut = robotsResult.sitemap.url ? 'SUCCESS' : 'WARNING';
-
-        } catch (sitemapErr) {
-            console.error('[MODULE-ROBOTS] Erreur capture sitemap :', sitemapErr);
-            robotsResult.sitemap.statut = 'ERROR';
-            robotsResult.sitemap.details = `Erreur : ${sitemapErr.message}`;
+            } catch (err) {
+                console.error("[MODULE-ROBOTS] Erreur Sitemap:", err.message);
+                robotsResult.sitemap.statut = 'ERROR';
+            }
+        } else {
+            // Error Page Capture (Fond Blanc)
+            console.log("[MODULE-ROBOTS] Sitemap NON DÉTECTÉ.");
+            await page.setContent(`
+                <body style="background: white; color: #d73a49; font-family: sans-serif; padding: 60px; text-align: center; border: 15px solid #f6f8fa;">
+                    <h1 style="font-size: 36px; margin-bottom: 20px;">⚠️ Sitemap non détecté</h1>
+                    <p style="font-size: 18px; color: #586069;">Le fichier sitemap n'est pas déclaré dans robots.txt et aucun fallback n'a fonctionné.</p>
+                </body>
+            `);
+            const errBuffer = await page.screenshot({ fullPage: false });
+            const errUrl = await uploadBufferToCloudinary(errBuffer, `sitemap-notfound-${auditId}.png`, 'audit-captures');
+            robotsResult.sitemap.capture = errUrl;
+            robotsResult.sitemap.statut = 'WARNING';
         }
 
     } catch (err) {
-        console.error('[MODULE-ROBOTS] Erreur globale :', err);
+        console.error('[MODULE-ROBOTS] Global error:', err);
+        robotsResult.robots_txt.statut = 'ERROR';
     } finally {
         await browser.close();
     }
-
     return robotsResult;
 }

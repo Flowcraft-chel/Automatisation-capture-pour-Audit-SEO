@@ -54,28 +54,33 @@ async function syncAirtableToDb(io, db) {
             const existing = await db.get('SELECT * FROM audits WHERE airtable_record_id = ?', [airtableId]);
 
             if (existing) {
-                // 1. Bidirectional Sync: Update fields if they changed in Airtable
-                if (existing.nom_site !== siteName ||
+                // Determine what the target local status should be
+                const targetLocalStatus = airtableStatus === 'fait' ? 'TERMINE' : 'EN_COURS';
+
+                // 1. Bidirectional Sync: Only update if REALLY needed
+                const hasChanged =
+                    existing.nom_site !== siteName ||
                     existing.url_site !== siteUrl ||
                     existing.sheet_audit_url !== sheetAuditUrl ||
                     existing.sheet_plan_url !== sheetPlanUrl ||
                     existing.mrm_report_url !== mrmReportUrl ||
-                    existing.statut_global !== (airtableStatus === 'fait' ? 'TERMINE' : 'EN_COURS')) {
+                    (existing.statut_global !== targetLocalStatus && existing.statut_global !== 'EN_COURS');
+                // Note: If local is EN_COURS, we let the worker finish before marking 'TERMINE'
 
-                    console.log(`[POLLER] Updating local record ${existing.id} due to Airtable changes.`);
-                    const newGlobalStatus = airtableStatus === 'fait' ? 'TERMINE' : 'EN_COURS';
+                if (hasChanged) {
+                    console.log(`[POLLER] Updating local record ${existing.id} (Airtable: ${airtableStatus})`);
 
                     await db.run(
                         'UPDATE audits SET nom_site = ?, url_site = ?, sheet_audit_url = ?, sheet_plan_url = ?, mrm_report_url = ?, statut_global = ? WHERE id = ?',
-                        [siteName, siteUrl, sheetAuditUrl, sheetPlanUrl, mrmReportUrl, newGlobalStatus, existing.id]
+                        [siteName, siteUrl, sheetAuditUrl, sheetPlanUrl, mrmReportUrl, targetLocalStatus, existing.id]
                     );
 
-                    // Notify frontend of the global update
+                    // Notify frontend
                     io.emit('audit:update', {
                         ...existing,
                         nom_site: siteName,
                         url_site: siteUrl,
-                        statut_global: newGlobalStatus
+                        statut_global: targetLocalStatus
                     });
                 }
 
