@@ -30,6 +30,7 @@ const CAPTURE_CONFIGS = [
         ],
         where: { colMatchAny: ["taille", "octet", "bytes"], op: "bytes_gte", value: 100000 },
         sort: { colMatchAny: ["taille", "octet", "bytes"], type: "bytes", order: "desc" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
 
@@ -44,6 +45,7 @@ const CAPTURE_CONFIGS = [
         tabName: "Balises H1-H6",
         keep: [{ label: "URL", matchAny: ["url"] }, { label: "H1 absente", matchAny: ["h1 absente"] }],
         where: { colMatchAny: ["h1 absente"], op: "equals_ci", value: "oui" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
     {
@@ -53,6 +55,7 @@ const CAPTURE_CONFIGS = [
         tabName: "Balises H1-H6",
         keep: [{ label: "URL", matchAny: ["url"] }, { label: "que des H1 vides", matchAny: ["que des h1 vides"] }],
         where: { colMatchAny: ["que des h1 vides"], op: "equals_ci", value: "oui" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
     {
@@ -62,6 +65,7 @@ const CAPTURE_CONFIGS = [
         tabName: "Balises H1-H6",
         keep: [{ label: "URL", matchAny: ["url"] }, { label: "au moins une H1 vide", matchAny: ["au moins une h1 vide"] }],
         where: { colMatchAny: ["au moins une h1 vide"], op: "equals_ci", value: "oui" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
     {
@@ -71,6 +75,7 @@ const CAPTURE_CONFIGS = [
         tabName: "Balises H1-H6",
         keep: [{ label: "URL", matchAny: ["url"] }, { label: "1ère balise Hn n'est pas H1", matchAny: ["1ere balise hn", "pas h1", "n'est pas h1"] }],
         where: { colMatchAny: ["1ere balise hn", "pas h1", "n'est pas h1"], op: "equals_ci", value: "oui" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
     {
@@ -81,6 +86,7 @@ const CAPTURE_CONFIGS = [
         keep: [{ label: "URL", matchAny: ["url"] }, { label: "Sauts de niveau entre les Hn", matchAny: ["sauts de niveau"] }],
         where: { colMatchAny: ["sauts de niveau"], op: "number_not_zero" },
         sort: { colMatchAny: ["sauts de niveau"], type: "number", order: "desc" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
     {
@@ -91,6 +97,7 @@ const CAPTURE_CONFIGS = [
         keep: [{ label: "URL", matchAny: ["url"] }, { label: "Hn trop longue", matchAny: ["hn trop longue"] }],
         where: { colMatchAny: ["hn trop longue"], op: "number_eq", value: 1 },
         sort: { colMatchAny: ["hn trop longue"], type: "number", order: "desc" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
 
@@ -101,7 +108,7 @@ const CAPTURE_CONFIGS = [
         tabName: "Nb mots body",
         keep: "ALL",
         sort: { colMatchAny: ["gravité", "gravite", "gravite du probleme"], type: "number", order: "desc" },
-        limitRows: 10,
+        limitRows: 15,
         skipIfEmpty: true,
     },
 
@@ -113,6 +120,7 @@ const CAPTURE_CONFIGS = [
         keep: [{ label: "URL", matchAny: ["url"] }, { label: "Nb de caractères", matchAny: ["nb de caracteres", "caractere", "caracter"] }],
         where: { colMatchAny: ["nb de caracteres", "caractere", "caracter"], op: "number_eq", value: 0 },
         sort: { colMatchAny: ["nb de caracteres", "caractere", "caracter"], type: "number", order: "asc" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
 
@@ -123,6 +131,7 @@ const CAPTURE_CONFIGS = [
         tabName: "Balise title",
         keep: [{ label: "URL", matchAny: ["url"] }, { label: "État balise title", matchAny: ["etat", "état", "status"] }],
         where: { colMatchAny: ["etat", "état", "status"], op: "includes_ci", value: "trop longue" },
+        limitRows: 15,
         skipIfEmpty: true,
     },
 
@@ -343,14 +352,14 @@ function renderHtmlTable({ title, table }) {
     display: inline-block;
     padding: 0;
     font-family: Arial, Helvetica, sans-serif;
-    font-size: 13px;
+    font-size: 11px;
   }
   table { border-collapse: collapse; }
   thead th {
     background: #f3f3f3;
     border: 1px solid #e2e2e2;
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 3px 8px;
+    font-size: 11px;
     font-weight: 700;
     color: #333;
     text-align: left;
@@ -358,8 +367,8 @@ function renderHtmlTable({ title, table }) {
   }
   tbody td {
     border: 1px solid #e2e2e2;
-    padding: 5px 10px;
-    font-size: 12px;
+    padding: 2px 8px;
+    font-size: 11px;
     color: #333;
     vertical-align: top;
     white-space: nowrap;

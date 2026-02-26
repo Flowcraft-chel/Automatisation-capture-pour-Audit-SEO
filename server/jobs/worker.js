@@ -111,35 +111,41 @@ export const initWorker = (io, db) => {
 
             // Sequence of steps
             // STEP 1: Robots & Sitemap
-            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Robots & Sitemap...`);
-            await updateStep('robots_txt', 'EN_COURS');
-            const robotsResult = await auditRobotsSitemap(siteUrl, auditId);
+            try {
+                console.log(`[WORKER] [JOB ${job.id}] Executing Step: Robots & Sitemap...`);
+                await updateStep('robots_txt', 'EN_COURS');
+                const robotsResult = await auditRobotsSitemap(siteUrl, auditId);
 
-            await updateStep('robots_txt', robotsResult.robots_txt.statut, robotsResult.robots_txt.details, robotsResult.robots_txt.capture);
+                await updateStep('robots_txt', robotsResult.robots_txt.statut, robotsResult.robots_txt.details, robotsResult.robots_txt.capture);
 
-            // Sync Robots to Airtable
-            if (audit.airtable_record_id) {
-                if (robotsResult.robots_txt.statut === 'SUCCESS') {
-                    console.log(`[WORKER] [JOB ${job.id}] Syncing Robots URL to Airtable...`);
-                    await updateAirtableField(audit.airtable_record_id, 'robot', robotsResult.robots_txt.url);
-                    if (robotsResult.robots_txt.capture) {
-                        await updateAirtableField(audit.airtable_record_id, 'Img_Robots_Txt', robotsResult.robots_txt.capture);
+                // Sync Robots to Airtable
+                if (audit.airtable_record_id) {
+                    if (robotsResult.robots_txt.statut === 'SUCCESS') {
+                        console.log(`[WORKER] [JOB ${job.id}] Syncing Robots URL to Airtable...`);
+                        await updateAirtableField(audit.airtable_record_id, 'robot', robotsResult.robots_txt.url);
+                        if (robotsResult.robots_txt.capture) {
+                            await updateAirtableField(audit.airtable_record_id, 'Img_Robots_Txt', robotsResult.robots_txt.capture);
+                        }
                     }
                 }
-            }
 
-            console.log(`[WORKER] [JOB ${job.id}] Exécution de l'étape : Sitemap...`);
-            await updateStep('sitemap', 'EN_COURS');
-            await updateStep('sitemap', robotsResult.sitemap.statut, robotsResult.sitemap.details, robotsResult.sitemap.capture);
+                console.log(`[WORKER] [JOB ${job.id}] Exécution de l'étape : Sitemap...`);
+                await updateStep('sitemap', 'EN_COURS');
+                await updateStep('sitemap', robotsResult.sitemap.statut, robotsResult.sitemap.details, robotsResult.sitemap.capture);
 
-            // Synchronisation Sitemap vers Airtable
-            if (audit.airtable_record_id) {
-                const sitemapUrlValue = robotsResult.sitemap.url || 'Le fichier sitemap(s) n’existe pas';
-                await updateAirtableField(audit.airtable_record_id, 'sitemaps', sitemapUrlValue);
-                if (robotsResult.sitemap.capture) {
-                    console.log(`[WORKER] [JOB ${job.id}] Synchronisation de la capture Sitemap vers Airtable...`);
-                    await updateAirtableField(audit.airtable_record_id, 'Img_Sitemap', robotsResult.sitemap.capture);
+                // Synchronisation Sitemap vers Airtable
+                if (audit.airtable_record_id) {
+                    const sitemapUrlValue = robotsResult.sitemap.url || 'Le fichier sitemap(s) n’existe pas';
+                    await updateAirtableField(audit.airtable_record_id, 'sitemaps', sitemapUrlValue);
+                    if (robotsResult.sitemap.capture) {
+                        console.log(`[WORKER] [JOB ${job.id}] Synchronisation de la capture Sitemap vers Airtable...`);
+                        await updateAirtableField(audit.airtable_record_id, 'Img_Sitemap', robotsResult.sitemap.capture);
+                    }
                 }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] Robots/Sitemap step failed:`, e.message);
+                await updateStep('robots_txt', 'FAILED', e.message);
+                await updateStep('sitemap', 'FAILED', e.message);
             }
 
             // STEP 2: Logo Extraction
@@ -295,7 +301,27 @@ export const initWorker = (io, db) => {
                 }
             }
 
-            // STEP 8: Google Sheets Plan d'Action — Direct Playwright Capture
+            // STEP 8: 404 Check (moved up as requested)
+            if (await checkCancellation()) return;
+            try {
+                await updateStep('check_404', 'EN_COURS');
+                if (sheetAuditUrl) {
+                    console.log(`[WORKER] [JOB ${job.id}] Starting 404 check...`);
+                    const res404 = await check404(sheetAuditUrl, auditId);
+                    await updateStep('check_404', res404.statut, res404.details, res404.capture);
+                    if (audit.airtable_record_id) {
+                        if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);
+                        if (res404.lien404) await updateAirtableField(audit.airtable_record_id, 'lien_404', res404.lien404);
+                    }
+                } else {
+                    await updateStep('check_404', 'SKIP', 'Lien Google Sheet non fourni');
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] 404 Step failed:`, e.message);
+                await updateStep('check_404', 'FAILED', e.message);
+            }
+
+            // STEP 9: Google Sheets Plan d'Action — Direct Playwright Capture
             if (await checkCancellation()) return;
 
             const planStepsMap = {
@@ -419,19 +445,7 @@ export const initWorker = (io, db) => {
             await updateStep('ahrefs_authority', ahrRes.statut, ahrRes.details, ahrRes.capture);
             if (audit.airtable_record_id && ahrRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_AHREF', ahrRes.capture);
 
-            // STEP 14: 404 Check (from Sheet "Erreurs" tab)
-            if (await checkCancellation()) return;
-            await updateStep('check_404', 'EN_COURS');
-            if (sheetAuditUrl) {
-                const res404 = await check404(sheetAuditUrl, auditId);
-                await updateStep('check_404', res404.statut, res404.details, res404.capture);
-                if (audit.airtable_record_id) {
-                    if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);
-                    if (res404.lien404) await updateAirtableField(audit.airtable_record_id, 'lien_404', res404.lien404);
-                }
-            } else {
-                await updateStep('check_404', 'SKIP', 'Lien Google Sheet non fourni');
-            }
+            /* Moved up to STEP 8 */
 
             // STEP 15: GSC Performance (Traffic) — requires Google cookies
             if (await checkCancellation()) return;

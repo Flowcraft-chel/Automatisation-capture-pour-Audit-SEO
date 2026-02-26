@@ -77,7 +77,7 @@ function renderSheetsHtml(headers, rows, title) {
     display: inline-block;
     padding: 0;
     font-family: Arial, Helvetica, sans-serif;
-    font-size: 13px;
+    font-size: 11px;
   }
   table {
     border-collapse: collapse;
@@ -85,8 +85,8 @@ function renderSheetsHtml(headers, rows, title) {
   thead th {
     background: #f3f3f3;
     border: 1px solid #e2e2e2;
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 3px 8px;
+    font-size: 11px;
     font-weight: 700;
     color: #333;
     text-align: left;
@@ -94,8 +94,8 @@ function renderSheetsHtml(headers, rows, title) {
   }
   tbody td {
     border: 1px solid #e2e2e2;
-    padding: 5px 10px;
-    font-size: 12px;
+    padding: 2px 8px;
+    font-size: 11px;
     color: #333;
     vertical-align: top;
     white-space: nowrap;
@@ -254,7 +254,9 @@ export async function check404(sheetUrl, auditId) {
         keepHeaders.push(headers[codeColIdx]);
         keepIndices.push(codeColIdx);
 
-        const projectedRows = rows404.map(r => keepIndices.map(i => r[i] ?? ""));
+        const projectedRows = rows404
+            .slice(0, 15) // Limit to 15 rows
+            .map(r => keepIndices.map(i => r[i] ?? ""));
 
         // Render HTML table in Google Sheets style
         const html = renderSheetsHtml(keepHeaders, projectedRows, "Erreurs 404");

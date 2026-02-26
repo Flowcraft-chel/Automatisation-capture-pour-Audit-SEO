@@ -219,6 +219,8 @@ ${htmlLines}
 </div>
 </body></html>`;
 
+                    // Navigate away from XML document first (XML documents don't support setContent)
+                    await page.goto('about:blank');
                     await page.setContent(sitemapHtml, { waitUntil: 'load' });
                     await page.waitForTimeout(500);
 
