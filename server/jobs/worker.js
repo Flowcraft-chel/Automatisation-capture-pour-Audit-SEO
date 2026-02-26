@@ -5,15 +5,7 @@ import { extractLogo } from '../modules/logo_extraction.js';
 import { auditSslLabs } from '../modules/ssl_labs.js';
 import { auditResponsive } from '../modules/responsive_check.js';
 import { auditPageSpeedMobile, auditPageSpeedDesktop } from '../modules/pagespeed.js';
-import {
-    captureSheetImages,
-    captureSheetSimpleTab,
-    captureSheetH1H6,
-    captureSheetMotsBody,
-    captureSheetMetaDesc,
-    captureSheetBaliseTitle,
-    capturePlanTab
-} from '../modules/google_sheets.js';
+import { auditGoogleSheetsAPI } from '../modules/google_sheets_api.js';
 import { captureGscSitemaps, captureGscHttps, captureGscPerformance, captureGscCoverage, captureGscTopPages } from '../modules/google_search_console.js';
 import { captureMrmProfondeur } from '../modules/mrm.js';
 import { captureUbersuggest } from '../modules/ubersuggest.js';
@@ -209,99 +201,68 @@ export const initWorker = (io, db) => {
                 }
             };
 
-            // STEP 7: Google Sheets — Audit Sheet
+            let googleCookies = null; // Declare once for both Sheets and GSC
             const sheetAuditUrl = audit.sheet_audit_url;
-            const googleCookies = await getSessionCookies('google');
+            const sheetPlanUrl = audit.sheet_plan_url;
 
-            if (!sheetAuditUrl) {
-                for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title']) {
+            // STEP 7 & 8: Google Sheets — API Unifiée (Audit & Plan d'action)
+
+            if (!sheetAuditUrl && !sheetPlanUrl) {
+                console.log(`[WORKER] [JOB ${job.id}] Missing Google Sheet URLs, skipping Sheets module.`);
+                for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides', 'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn', 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title', 'plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur']) {
                     await updateStep(k, 'SKIP', 'Lien Google Sheet non fourni');
                 }
             } else {
-                // Google Sheets are shared with editor rights (public link), cookies are optional
-                if (!googleCookies) console.log(`[WORKER] [JOB ${job.id}] No Google cookies, opening sheets as public viewer.`);
-                // 7a. Images
-                await updateStep('sheet_images', 'EN_COURS');
-                const imgRes = await captureSheetImages(sheetAuditUrl, auditId, googleCookies);
-                await updateStep('sheet_images', imgRes.statut, imgRes.details, imgRes.capture);
-                if (audit.airtable_record_id && imgRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_Poids_image', imgRes.capture);
+                console.log(`[WORKER] [JOB ${job.id}] Starting Google Sheets API Module...`);
+                // Définition de la correspondance entre les step keys du DB et les ID du script client
+                const sheetStepsMap = {
+                    "Img_Poids_image": "sheet_images",
+                    "Img_balise_h1_absente": "sheet_h1_absente",
+                    "Img_que des H1 vides": "sheet_h1_vides",
+                    "Img_au moins une H1 vide": "sheet_h1_au_moins",
+                    "Img_1ère balise Hn n'est pas H1": "sheet_hn_pas_h1",
+                    "Img_Sauts de niveau entre les Hn": "sheet_sauts_hn",
+                    "Img_Hn trop longue": "sheet_hn_longue",
+                    "Img_longeur_page": "sheet_mots_body",
+                    "Img_meta_description": "sheet_meta_desc",
+                    "Img_balises_title": "sheet_balise_title",
+                    "Img_meme_title": "sheet_meme_title",
+                    "Img_meta_description_double": "sheet_meta_desc_double",
+                    "Img_balise_h1_double": "sheet_doublons_h1",
+                    "Img_planD'action": "plan_synthese",
+                    "Img_Requetes_cles": "plan_requetes",
+                    "Img_donnee image": "plan_donnees_img",
+                    "Img_longeur_page_plan": "plan_longueur"
+                };
 
-                // 7b. Même title
-                await updateStep('sheet_meme_title', 'EN_COURS');
-                const mTitleRes = await captureSheetSimpleTab(sheetAuditUrl, 'Même title', auditId, googleCookies, 'Img_meme_title');
-                await updateStep('sheet_meme_title', mTitleRes.statut, mTitleRes.details, mTitleRes.capture);
-                if (audit.airtable_record_id && mTitleRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meme_title', mTitleRes.capture);
-
-                // 7c. Même balise meta desc
-                await updateStep('sheet_meta_desc_double', 'EN_COURS');
-                const mMetaRes = await captureSheetSimpleTab(sheetAuditUrl, 'Même balise meta desc', auditId, googleCookies, 'Img_meta_description_double');
-                await updateStep('sheet_meta_desc_double', mMetaRes.statut, mMetaRes.details, mMetaRes.capture);
-                if (audit.airtable_record_id && mMetaRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meta_description_double', mMetaRes.capture);
-
-                // 7d. Doublons H1
-                await updateStep('sheet_doublons_h1', 'EN_COURS');
-                const dh1Res = await captureSheetSimpleTab(sheetAuditUrl, 'Doublons H1', auditId, googleCookies, 'Img_balise_h1_double');
-                await updateStep('sheet_doublons_h1', dh1Res.statut, dh1Res.details, dh1Res.capture);
-                if (audit.airtable_record_id && dh1Res.capture) await updateAirtableField(audit.airtable_record_id, 'Img_balise_h1_double', dh1Res.capture);
-
-                // 7e. Balises H1-H6 (multiple sub-captures)
-                await updateStep('sheet_h1_absente', 'EN_COURS');
-                const h1Results = await captureSheetH1H6(sheetAuditUrl, auditId, googleCookies);
-                for (const [field, h1Res] of Object.entries(h1Results)) {
-                    const stepKey = {
-                        'Img_balise_h1_absente': 'sheet_h1_absente',
-                        'Img_que des H1 vides': 'sheet_h1_vides',
-                        "Img_au moins une H1 vide": 'sheet_h1_au_moins',
-                        "Img_1ère balise Hn n'est pas H1": 'sheet_hn_pas_h1',
-                        'Img_Sauts de niveau entre les Hn': 'sheet_sauts_hn',
-                        'Img_Hn trop longue': 'sheet_hn_longue'
-                    }[field];
-                    if (stepKey) await updateStep(stepKey, h1Res.statut, h1Res.details, h1Res.capture);
-                    if (audit.airtable_record_id && h1Res.capture) await updateAirtableField(audit.airtable_record_id, field, h1Res.capture);
+                // Signaler à l'UI que tous ces jobs démarrent l'extraction API
+                for (const stepKey of Object.values(sheetStepsMap)) {
+                    await updateStep(stepKey, 'API_SYNC'); // Nouveau statut custom pour notifier l'UI si besoin ou EN_COURS
+                    await updateStep(stepKey, 'EN_COURS');
                 }
 
-                // 7f. Nb de mots body
-                await updateStep('sheet_mots_body', 'EN_COURS');
-                const motRes = await captureSheetMotsBody(sheetAuditUrl, auditId, googleCookies);
-                await updateStep('sheet_mots_body', motRes.statut, motRes.details, motRes.capture);
-                if (audit.airtable_record_id && motRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_longeur_page', motRes.capture);
+                // Lancement unifié
+                const sheetResults = await auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId);
 
-                // 7g. Meta desc
-                await updateStep('sheet_meta_desc', 'EN_COURS');
-                const metaRes = await captureSheetMetaDesc(sheetAuditUrl, auditId, googleCookies);
-                await updateStep('sheet_meta_desc', metaRes.statut, metaRes.details, metaRes.capture);
-                if (audit.airtable_record_id && metaRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meta_description', metaRes.capture);
-
-                // 7h. Balise title
-                await updateStep('sheet_balise_title', 'EN_COURS');
-                const titRes = await captureSheetBaliseTitle(sheetAuditUrl, auditId, googleCookies);
-                await updateStep('sheet_balise_title', titRes.statut, titRes.details, titRes.capture);
-                if (audit.airtable_record_id && titRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_balises_title', titRes.capture);
-            }
-
-            // STEP 8: Google Sheets — Plan d'action
-            const sheetPlanUrl = audit.sheet_plan_url;
-            if (!sheetPlanUrl) {
-                for (const k of ['plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur']) {
-                    await updateStep(k, 'SKIP', "Lien Plan d'action non fourni");
-                }
-            } else {
-                const planTabs = [
-                    { tab: "Synthèse Audit - Plan d'action", key: 'plan_synthese', field: "Img_planD'action", slug: 'plan-synthese' },
-                    { tab: 'Requêtes Clés / Calédito', key: 'plan_requetes', field: 'Img_Requetes_cles', slug: 'plan-requetes' },
-                    { tab: 'Données Images', key: 'plan_donnees_img', field: 'Img_donnee image', slug: 'plan-donnees-img' },
-                    { tab: 'Longueur de page', key: 'plan_longueur', field: 'Img_longeur_page', slug: 'plan-longueur' },
-                ];
-                for (const { tab, key, field, slug } of planTabs) {
-                    await updateStep(key, 'EN_COURS');
-                    const res = await capturePlanTab(sheetPlanUrl, tab, auditId, googleCookies, slug);
-                    await updateStep(key, res.statut, res.details, res.capture);
-                    if (audit.airtable_record_id && res.capture) await updateAirtableField(audit.airtable_record_id, field, res.capture);
+                // Mise à jour DB + Airtable pour chaque résultat
+                for (const [fieldId, res] of Object.entries(sheetResults)) {
+                    const stepKey = sheetStepsMap[fieldId];
+                    if (stepKey) {
+                        await updateStep(stepKey, res.statut, res.details, res.capture);
+                    }
+                    if (res.capture && res.statut === "SUCCESS" && audit.airtable_record_id) {
+                        try {
+                            await updateAirtableField(audit.airtable_record_id, fieldId, res.capture);
+                        } catch (e) {
+                            console.error(`[WORKER] Failed to update Airtable for ${fieldId}:`, e.message);
+                        }
+                    }
                 }
             }
 
             // STEP 9: Google Search Console
             await updateStep('gsc_sitemaps', 'EN_COURS');
+            googleCookies = await getSessionCookies('google'); // Reuse instead of re-declare
             if (!googleCookies) {
                 await updateStep('gsc_sitemaps', 'SKIP', 'Session Google non connectée');
                 await updateStep('gsc_https', 'SKIP', 'Session Google non connectée');
