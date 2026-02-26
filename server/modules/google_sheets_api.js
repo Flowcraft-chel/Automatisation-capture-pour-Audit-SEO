@@ -127,10 +127,7 @@ const CAPTURE_CONFIGS = [
     },
 
     // ===== SHEET PLAN D'ACTION =====
-    { airtableField: "Img_planD'action", target: "plan", mode: "raw", tabName: "Synthèse Audit - Plan d'action" },
-    { airtableField: "Img_Requetes_cles", target: "plan", mode: "raw", tabName: "Requêtes Clés / Calédito" },
-    { airtableField: "Img_donnee image", target: "plan", mode: "raw", tabName: "Données Images" },
-    { airtableField: "Img_longeur_page_plan", target: "plan", mode: "raw", tabName: "Longueur de page" },
+    // Plan d'action captures are done via direct Playwright screenshots (see sheet_plan_capture.js)
 ];
 
 /**

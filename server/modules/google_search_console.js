@@ -54,16 +54,21 @@ export async function captureGscSitemaps(siteUrl, auditId, googleCookies) {
         const domain = new URL(siteUrl).hostname;
         // Navigate to GSC sitemaps tab
         const gscUrl = `https://search.google.com/search-console/sitemaps?resource_id=https%3A%2F%2F${encodeURIComponent(domain)}%2F`;
-        await page.goto(gscUrl, { waitUntil: 'networkidle', timeout: 60000 });
+        console.log(`[GSC] Navigating to Sitemaps: ${gscUrl}`);
+        console.log(`[GSC] Cookies injected: ${googleCookies.length} cookies`);
+        await page.goto(gscUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
         // Check we're logged in
-        if (page.url().includes('accounts.google.com')) {
+        const currentUrl = page.url();
+        console.log(`[GSC] Current URL after navigation: ${currentUrl}`);
+        if (currentUrl.includes('accounts.google.com') || currentUrl.includes('signin')) {
             result.statut = 'SKIP';
-            result.details = 'Session Google expirée ou invalide';
+            result.details = 'Session Google expirée ou invalide (redirigé vers login)';
+            console.error(`[GSC] ❌ Session expired — redirected to: ${currentUrl}`);
             return result;
         }
 
-        await page.waitForTimeout(4000);
+        await page.waitForTimeout(6000);
 
         const tmpPath = path.resolve(`temp_gsc_sitemap_${uuidv4()}.png`);
         await page.screenshot({ path: tmpPath, fullPage: false });
@@ -94,7 +99,8 @@ export async function captureGscHttps(siteUrl, auditId, googleCookies) {
     try {
         const domain = new URL(siteUrl).hostname;
         const gscUrl = `https://search.google.com/search-console/security-issues?resource_id=https%3A%2F%2F${encodeURIComponent(domain)}%2F`;
-        await page.goto(gscUrl, { waitUntil: 'networkidle', timeout: 60000 });
+        console.log(`[GSC] Navigating to HTTPS: ${gscUrl}`);
+        await page.goto(gscUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
         if (page.url().includes('accounts.google.com')) {
             result.statut = 'SKIP';

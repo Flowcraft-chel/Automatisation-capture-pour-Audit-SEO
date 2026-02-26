@@ -55,13 +55,17 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
 
     try {
         console.log(`[MRM] Navigating to: ${mrmReportUrl}`);
+        console.log(`[MRM] Cookies injected: ${cookies.length} cookies`);
         await page.goto(mrmReportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(5000);
 
-        // Vérifier si on ets toujours connectés
-        if (page.url().includes('login') || page.url().includes('signin')) {
+        // Vérifier si on est toujours connectés
+        const currentUrl = page.url();
+        console.log(`[MRM] Current URL after navigation: ${currentUrl}`);
+        if (currentUrl.includes('login') || currentUrl.includes('signin') || currentUrl.includes('connexion')) {
             result.statut = 'SKIP';
-            result.details = 'Session MRM expirée — reconnexion nécessaire';
+            result.details = `Session MRM expirée — redirigé vers: ${currentUrl}`;
+            console.error(`[MRM] ❌ Session expired — redirected to: ${currentUrl}`);
             return result;
         }
 

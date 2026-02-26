@@ -6,6 +6,7 @@ import { auditSslLabs } from '../modules/ssl_labs.js';
 import { auditResponsive } from '../modules/responsive_check.js';
 import { auditPageSpeedMobile, auditPageSpeedDesktop } from '../modules/pagespeed.js';
 import { auditGoogleSheetsAPI } from '../modules/google_sheets_api.js';
+import { capturePlanDAction } from '../modules/sheet_plan_capture.js';
 import { captureGscSitemaps, captureGscHttps, captureGscPerformance, captureGscCoverage, captureGscTopPages } from '../modules/google_search_console.js';
 import { captureMrmProfondeur } from '../modules/mrm.js';
 import { captureUbersuggest } from '../modules/ubersuggest.js';
@@ -247,17 +248,16 @@ export const initWorker = (io, db) => {
             const sheetAuditUrl = audit.sheet_audit_url;
             const sheetPlanUrl = audit.sheet_plan_url;
 
-            // STEP 7 & 8: Google Sheets — API Unifiée (Audit & Plan d'action)
+            // STEP 7: Google Sheets Audit — API (HTML rendering)
 
-            if (!sheetAuditUrl && !sheetPlanUrl) {
-                console.log(`[WORKER] [JOB ${job.id}] Missing Google Sheet URLs, skipping Sheets module.`);
-                for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides', 'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn', 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title', 'plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur']) {
-                    await updateStep(k, 'SKIP', 'Lien Google Sheet non fourni');
+            if (!sheetAuditUrl) {
+                console.log(`[WORKER] [JOB ${job.id}] Missing Audit Sheet URL, skipping.`);
+                for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides', 'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn', 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title']) {
+                    await updateStep(k, 'SKIP', 'Lien Google Sheet Audit non fourni');
                 }
             } else {
                 if (await checkCancellation()) return;
-                console.log(`[WORKER] [JOB ${job.id}] Starting Google Sheets API Module...`);
-                // Définition de la correspondance entre les step keys du DB et les ID du script client
+                console.log(`[WORKER] [JOB ${job.id}] Starting Google Sheets API (Audit)...`);
                 const sheetStepsMap = {
                     "Img_Poids_image": "sheet_images",
                     "Img_balise_h1_absente": "sheet_h1_absente",
@@ -272,22 +272,14 @@ export const initWorker = (io, db) => {
                     "Img_meme_title": "sheet_meme_title",
                     "Img_meta_description_double": "sheet_meta_desc_double",
                     "Img_balise_h1_double": "sheet_doublons_h1",
-                    "Img_planD'action": "plan_synthese",
-                    "Img_Requetes_cles": "plan_requetes",
-                    "Img_donnee image": "plan_donnees_img",
-                    "Img_longeur_page_plan": "plan_longueur"
                 };
 
-                // Signaler à l'UI que tous ces jobs démarrent l'extraction API
                 for (const stepKey of Object.values(sheetStepsMap)) {
-                    await updateStep(stepKey, 'API_SYNC'); // Nouveau statut custom pour notifier l'UI si besoin ou EN_COURS
                     await updateStep(stepKey, 'EN_COURS');
                 }
 
-                // Lancement unifié
-                const sheetResults = await auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId);
+                const sheetResults = await auditGoogleSheetsAPI(sheetAuditUrl, null, auditId);
 
-                // Mise à jour DB + Airtable pour chaque résultat
                 for (const [fieldId, res] of Object.entries(sheetResults)) {
                     const stepKey = sheetStepsMap[fieldId];
                     if (stepKey) {
@@ -299,6 +291,55 @@ export const initWorker = (io, db) => {
                         } catch (e) {
                             console.error(`[WORKER] Failed to update Airtable for ${fieldId}:`, e.message);
                         }
+                    }
+                }
+            }
+
+            // STEP 8: Google Sheets Plan d'Action — Direct Playwright Capture
+            if (await checkCancellation()) return;
+
+            const planStepsMap = {
+                "Img_planD'action": "plan_synthese",
+                "Img_Requetes_cles": "plan_requetes",
+                "Img_donnee image": "plan_donnees_img",
+                "Img_longeur_page_plan": "plan_longueur"
+            };
+
+            if (!sheetPlanUrl) {
+                console.log(`[WORKER] [JOB ${job.id}] Missing Plan d'Action Sheet URL, skipping.`);
+                for (const k of Object.values(planStepsMap)) {
+                    await updateStep(k, 'SKIP', "Lien Google Sheet plan d'action non fourni");
+                }
+            } else {
+                console.log(`[WORKER] [JOB ${job.id}] Starting Plan d'Action captures (Playwright direct)...`);
+                for (const stepKey of Object.values(planStepsMap)) {
+                    await updateStep(stepKey, 'EN_COURS');
+                }
+
+                googleCookies = await getSessionCookies('google');
+                try {
+                    const planResults = await runWithTimeout(
+                        capturePlanDAction(sheetPlanUrl, auditId, googleCookies),
+                        300000, "Plan d'Action Capture"
+                    );
+
+                    for (const [fieldId, res] of Object.entries(planResults)) {
+                        const stepKey = planStepsMap[fieldId];
+                        if (stepKey) {
+                            await updateStep(stepKey, res.statut, res.details, res.capture);
+                        }
+                        if (res.capture && res.statut === "SUCCESS" && audit.airtable_record_id) {
+                            try {
+                                await updateAirtableField(audit.airtable_record_id, fieldId, res.capture);
+                            } catch (e) {
+                                console.error(`[WORKER] Failed to update Airtable for ${fieldId}:`, e.message);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(`[WORKER] [JOB ${job.id}] Plan d'Action capture failed:`, e.message);
+                    for (const stepKey of Object.values(planStepsMap)) {
+                        await updateStep(stepKey, 'FAILED', e.message);
                     }
                 }
             }
