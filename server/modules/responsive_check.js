@@ -33,6 +33,28 @@ export async function auditResponsive(url, auditId) {
         // Use networkidle to wait for all resources to load
         await page.goto(amiUrl, { waitUntil: 'networkidle', timeout: 90000 });
 
+        // ── 1. Forcer la soumission de l'URL car l'URL parameter ne marche pas toujours ──
+        console.log('[MODULE-RESPONSIVE] Saisie de l\'URL et validation...');
+        try {
+            for (const inputSel of ['input[name="url"]', 'input[type="text"]', 'input[id="url"]']) {
+                const input = page.locator(inputSel).first();
+                if (await input.count() > 0 && await input.isVisible()) {
+                    await input.fill(url);
+                    break;
+                }
+            }
+            for (const btnSel of ['button:has-text("GO")', 'input[type="submit"]', 'button[type="submit"]', '#go']) {
+                const btn = page.locator(btnSel).first();
+                if (await btn.count() > 0 && await btn.isVisible()) {
+                    await btn.click();
+                    break;
+                }
+            }
+            await page.waitForTimeout(3000); // Laisse le temps aux iframes de se générer
+        } catch {
+            console.log('[MODULE-RESPONSIVE] Échec de la saisie manuelle, tentative via paramètre URL seule.');
+        }
+
         // Wait for the devices container to appear
         console.log('[MODULE-RESPONSIVE] Waiting for devices container...');
         try {
@@ -40,11 +62,9 @@ export async function auditResponsive(url, auditId) {
                 state: 'visible', timeout: 20000
             });
             console.log('[MODULE-RESPONSIVE] Devices container found.');
-        } catch {
-            console.log('[MODULE-RESPONSIVE] No device container found, continuing anyway...');
-        }
+        } catch { }
 
-        // Dismiss cookie banners EARLY so they don't cover the frames
+        // Dismiss cookie banners
         for (const txt of ['Accept', 'OK', 'Tout accepter', 'I agree', 'Accept all', 'Accepter']) {
             try {
                 const btn = page.locator(`button:has-text("${txt}")`).first();
@@ -56,29 +76,34 @@ export async function auditResponsive(url, auditId) {
             } catch { }
         }
 
-        // CRITICAL: Wait for iframes to load the site content inside device frames
-        console.log('[MODULE-RESPONSIVE] Waiting for iframes to load site content...');
+        // CRITICAL: Wait for iframes to actually load the site content
+        console.log('[MODULE-RESPONSIVE] Attente du chargement DOM réel dans les iframes...');
         try {
-            // Wait for at least one iframe to have content loaded
+            // Surveille la présence du contenu (body) dans les iframes
             await page.waitForFunction(() => {
                 const iframes = document.querySelectorAll('iframe');
                 if (iframes.length === 0) return false;
-                // Check if at least one iframe has a valid src and appears loaded
-                for (const iframe of iframes) {
-                    if (iframe.src && iframe.src.length > 10 && iframe.offsetHeight > 50) {
-                        return true;
+                for (const frame of iframes) {
+                    try {
+                        const content = frame.contentWindow || frame.contentDocument;
+                        const doc = frame.contentDocument || content.document;
+                        // Considéré comme chargé si le document d'iframe a une taille et un body
+                        if (doc && doc.body && doc.body.innerHTML.length > 50) return true;
+                    } catch (e) {
+                        // Cross-origin: on assume que ça charge si src a changé
+                        if (frame.src && frame.src.length > 10) return true;
                     }
                 }
                 return false;
-            }, { timeout: 30000 });
-            console.log('[MODULE-RESPONSIVE] Iframes detected with content.');
+            }, { timeout: 25000 });
+            console.log('[MODULE-RESPONSIVE] Iframes prêtes.');
         } catch {
-            console.log('[MODULE-RESPONSIVE] Iframe detection timeout, proceeding...');
+            console.log('[MODULE-RESPONSIVE] Délai dépassé pour iframes, on continue...');
         }
 
-        // Wait additional time for rendering and animations to complete
-        console.log('[MODULE-RESPONSIVE] Waiting 15s for full rendering...');
-        await page.waitForTimeout(15000);
+        // Wait additional time for images/CSS to render fully in the iframe
+        console.log('[MODULE-RESPONSIVE] Attente supplémentaire pour le rendu (8s)...');
+        await page.waitForTimeout(8000);
 
         // Take screenshot — capture only the devices area if possible
         const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';

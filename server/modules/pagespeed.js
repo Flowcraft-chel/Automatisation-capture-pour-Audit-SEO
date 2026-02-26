@@ -29,25 +29,37 @@ async function auditPageSpeed(url, auditId, strategy) {
     const page = await context.newPage();
     let result = { statut: 'FAILED', capture: null, score: null, details: null };
 
+    // ── 0. Lancer l'appel API en asynchrone dès le début pour la vitesse ──
+    const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance`;
+    let apiScorePromise = fetch(apiUrl, { signal: AbortSignal.timeout(25000) })
+        .then(res => res.json())
+        .then(data => {
+            const score = data?.lighthouseResult?.categories?.performance?.score;
+            return score != null ? Math.round(score * 100) : null;
+        })
+        .catch(e => {
+            console.log(`[MODULE-PSI] API fetch error (${label}): ${e.message}`);
+            return null;
+        });
+
     try {
         console.log(`[MODULE-PSI] Starting ${label} audit for ${url}...`);
-        await page.goto(psiUrl, { waitUntil: 'networkidle', timeout: 120000 });
+        await page.goto(psiUrl, { waitUntil: 'networkidle', timeout: 90000 });
 
         // ── 1. Wait for the gauge (score circle) to appear ──
         console.log(`[MODULE-PSI] Waiting for gauge (${label})...`);
         try {
-            // Wait for the main performance gauge specifically
-            await page.waitForSelector('.lh-gauge__percentage', { timeout: 120000 });
+            // Un timeout plus court pour ne pas bloquer si le site web dev est lent
+            await page.waitForSelector('.lh-gauge__percentage', { timeout: 15000 });
             console.log(`[MODULE-PSI] Gauge appeared (${label}).`);
         } catch {
-            console.log(`[MODULE-PSI] Gauge timeout (${label}). Continuing...`);
+            console.log(`[MODULE-PSI] Gauge timeout (${label}). Continuing to screenshot using API score fallback...`);
         }
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(3000); // Laisse un peu de temps à l'animation de finir
 
-        // ── 2. Extract the score from DOM — PROVEN METHOD ──
+        // ── 2. Extract the score from DOM ──
         const scores = await page.evaluate(() => {
             const data = {};
-            // Find all gauges, focus on Performance
             document.querySelectorAll('.lh-gauge').forEach(gauge => {
                 if (gauge.offsetParent === null) return;
                 const labelText = gauge.querySelector('.lh-gauge__label')?.innerText?.toLowerCase()?.trim();
@@ -61,20 +73,17 @@ async function auditPageSpeed(url, auditId, strategy) {
         });
 
         const domScore = scores['performance'] ?? scores['performances'] ?? null;
-        // ... (rest of score logic remains similar)
-        if (domScore !== null) {
+
+        // ── 3. Resolve final score (DOM 우선, sinon API) ──
+        const apiScore = await apiScorePromise;
+        if (domScore !== null && domScore > 0) {
             result.score = domScore;
+            console.log(`[MODULE-PSI] Score extracted from DOM (${label}): ${result.score}`);
+        } else if (apiScore !== null) {
+            result.score = apiScore;
+            console.log(`[MODULE-PSI] Score extracted from API (${label}): ${result.score}`);
         } else {
-            // ... (API fallback remains similar)
-            try {
-                const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance`;
-                const apiRes = await fetch(apiUrl, { signal: AbortSignal.timeout(30000) });
-                if (apiRes.ok) {
-                    const apiData = await apiRes.json();
-                    const apiScore = apiData?.lighthouseResult?.categories?.performance?.score;
-                    if (apiScore != null) { result.score = Math.round(apiScore * 100); }
-                }
-            } catch { }
+            console.warn(`[MODULE-PSI] ⚠️ No score found (${label}).`);
         }
 
         // ── 4. Dismiss cookie banners ──

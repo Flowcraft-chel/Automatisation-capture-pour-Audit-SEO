@@ -70,61 +70,68 @@ export async function auditRobotsSitemap(url, auditId) {
                 return { hasSitemap: sitemaps.length > 0, lines: sitemaps, firstUrl };
             });
 
-            console.log(`[MODULE-ROBOTS] ${sitemapInfo.lines.length} sitemaps trouvés.`);
-
-            // 2. Stylisation (Fond Blanc, Texte Noir, Sitemaps Jaunes)
-            await page.evaluate((sitemapIndices) => {
+            // 2. Rendu DOM sélectif et Capture
+            await page.evaluate((info) => {
                 if (!document.body) return;
                 const text = document.body.textContent || "";
                 const lines = text.split('\n');
 
                 document.body.innerHTML = '';
-                document.body.style.cssText = 'background: white !important; margin: 0; padding: 40px !important; color: black !important; font-family: monospace; font-size: 16px; line-height: 1.5;';
+                document.body.style.cssText = 'background: white !important; margin: 0; padding: 40px !important; color: black !important; font-family: monospace; font-size: 16px; line-height: 1.5; display: inline-block; min-width: 600px;';
 
                 const container = document.createElement('div');
-                lines.forEach((line, idx) => {
-                    const div = document.createElement('div');
-                    div.textContent = line || ' ';
-                    if (sitemapIndices.includes(idx)) {
-                        div.style.cssText = 'background: #fff3cd !important; border-left: 5px solid #ffc107 !important; padding: 5px 15px !important; margin: 5px 0 !important; font-weight: bold; color: black !important;';
-                    } else {
+                container.id = 'robots-capture-container';
+                container.style.cssText = 'display: inline-block; padding: 20px; border: 1px solid #ddd; background: #fafafa; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);';
+
+                if (info.hasSitemap) {
+                    const title = document.createElement('div');
+                    title.textContent = '📍 Lignes Sitemap extraites de robots.txt';
+                    title.style.cssText = 'color: #555; font-family: sans-serif; font-size: 14px; font-weight: bold; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 8px;';
+                    container.appendChild(title);
+
+                    info.lines.forEach(obj => {
+                        const div = document.createElement('div');
+                        div.textContent = obj.text;
+                        div.style.cssText = 'background: #fff3cd !important; border-left: 5px solid #ffc107 !important; padding: 8px 15px !important; margin: 5px 0 !important; font-weight: bold; color: black !important;';
+                        container.appendChild(div);
+                    });
+                } else {
+                    const title = document.createElement('div');
+                    title.textContent = '📄 Fichier robots.txt (Aperçu complet)';
+                    title.style.cssText = 'color: #555; font-family: sans-serif; font-size: 14px; font-weight: bold; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 8px;';
+                    container.appendChild(title);
+
+                    lines.slice(0, 40).forEach(line => {
+                        const div = document.createElement('div');
+                        div.textContent = line || ' ';
                         div.style.padding = '2px 0';
+                        container.appendChild(div);
+                    });
+
+                    if (lines.length > 40) {
+                        const trunc = document.createElement('div');
+                        trunc.textContent = `... (${lines.length - 40} lignes supplémentaires tronquées)`;
+                        trunc.style.color = '#888';
+                        trunc.style.fontStyle = 'italic';
+                        container.appendChild(trunc);
                     }
-                    container.appendChild(div);
-                });
+                }
+
                 document.body.appendChild(container);
-            }, sitemapInfo.lines.map(l => l.index));
+            }, sitemapInfo);
 
             await page.waitForTimeout(1000);
-            const robotsBuffer = await page.screenshot({ fullPage: false });
-            const robotsRawUrl = await uploadBufferToCloudinary(robotsBuffer, `robots-raw-${auditId}.png`, 'audit-temp');
 
-            // 3. Rognage IA
-            const prompt = `Cette image montre un fichier robots.txt. Les lignes de type Sitemap sont surlignées en jaune.
-RÈGLES DE ROGNAGE :
-1. CONSERVE TOUTES les lignes de texte visibles.
-2. Supprime l'espace vide blanc à droite et en bas.
-3. La largeur doit être ajustée au texte le plus long.
-Réponds UNIQUEMENT avec : CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
-
-            const aiRes = await analyzeImage(robotsRawUrl, prompt);
-            const match = aiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
-
-            if (match) {
-                let [_, rx, ry, rw, rh] = match.map(Number);
-                const meta = await sharp(robotsBuffer).metadata();
-                rx = Math.max(0, rx); ry = Math.max(0, ry);
-                rw = Math.min(rw, meta.width - rx); rh = Math.min(rh, meta.height - ry);
-
-                if (rw > 50 && rh > 20) {
-                    const finalBuffer = await sharp(robotsBuffer).extract({ left: rx, top: ry, width: rw, height: rh }).toBuffer();
-                    robotsResult.robots_txt.capture = await uploadBufferToCloudinary(finalBuffer, `robots-final-${auditId}.png`, 'audit-captures');
-                } else {
-                    robotsResult.robots_txt.capture = robotsRawUrl;
-                }
+            let robotsBuffer;
+            const containerEl = await page.$('#robots-capture-container');
+            if (containerEl) {
+                robotsBuffer = await containerEl.screenshot();
             } else {
-                robotsResult.robots_txt.capture = robotsRawUrl;
+                robotsBuffer = await page.screenshot({ fullPage: false });
             }
+
+            // Pas besoin d'IA supplémentaire car le conteneur est déjà clean et aux dimensions exactes
+            robotsResult.robots_txt.capture = await uploadBufferToCloudinary(robotsBuffer, `robots-final-${auditId}.png`, 'audit-captures');
 
             if (sitemapInfo.firstUrl) robotsResult.sitemap.url = sitemapInfo.firstUrl;
         }
