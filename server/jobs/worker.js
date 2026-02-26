@@ -110,21 +110,17 @@ export const initWorker = (io, db) => {
                 }
             }
 
-            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Sitemap...`);
+            console.log(`[WORKER] [JOB ${job.id}] Exécution de l'étape : Sitemap...`);
             await updateStep('sitemap', 'EN_COURS');
             await updateStep('sitemap', robotsResult.sitemap.statut, robotsResult.sitemap.details, robotsResult.sitemap.capture);
 
-            // Sync Sitemap to Airtable
+            // Synchronisation Sitemap vers Airtable
             if (audit.airtable_record_id) {
-                if (robotsResult.sitemap.statut === 'SUCCESS') {
-                    console.log(`[WORKER] [JOB ${job.id}] Syncing Sitemap URL to Airtable...`);
-                    await updateAirtableField(audit.airtable_record_id, 'sitemaps', robotsResult.sitemap.url);
-                    if (robotsResult.sitemap.capture) {
-                        console.log(`[WORKER] [JOB ${job.id}] Syncing Sitemap Capture to Airtable...`);
-                        await updateAirtableField(audit.airtable_record_id, 'Img_Sitemap', robotsResult.sitemap.capture);
-                    }
-                } else {
-                    await updateAirtableField(audit.airtable_record_id, 'sitemaps', "Le fichier sitemaps n'existe pas");
+                const sitemapUrlValue = robotsResult.sitemap.url || 'Le fichier sitemap(s) n’existe pas';
+                await updateAirtableField(audit.airtable_record_id, 'sitemaps', sitemapUrlValue);
+                if (robotsResult.sitemap.capture) {
+                    console.log(`[WORKER] [JOB ${job.id}] Synchronisation de la capture Sitemap vers Airtable...`);
+                    await updateAirtableField(audit.airtable_record_id, 'Img_Sitemap', robotsResult.sitemap.capture);
                 }
             }
 

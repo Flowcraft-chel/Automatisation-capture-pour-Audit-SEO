@@ -12,8 +12,11 @@ import sharp from 'sharp';
  * 4. Crop programmatically with sharp based on measured dimensions
  * 5. Same for sitemap page
  */
+/**
+ * Audit robots.txt et capture des preuves.
+ */
 export async function auditRobotsSitemap(url, auditId) {
-    console.log(`[MODULE-ROBOTS] Starting Audit for: ${url}`);
+    console.log(`[MODULE-ROBOTS] Début de l'audit pour : ${url}`);
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
         viewport: { width: 1400, height: 900 }
@@ -27,20 +30,20 @@ export async function auditRobotsSitemap(url, auditId) {
     };
 
     try {
-        // --- STAGE 1: robots.txt ---
-        console.log(`[MODULE-ROBOTS] Navigating to: ${robotsUrl}`);
+        // --- ÉTAPE 1 : robots.txt ---
+        console.log(`[MODULE-ROBOTS] Navigation vers : ${robotsUrl}`);
         const robotsResponse = await page.goto(robotsUrl, { waitUntil: 'networkidle', timeout: 30000 });
 
         if (!robotsResponse || robotsResponse.status() >= 400) {
             robotsResult.robots_txt.statut = 'ERROR';
-            robotsResult.robots_txt.details = `Erreur HTTP: ${robotsResponse ? robotsResponse.status() : 'No response'}`;
+            robotsResult.robots_txt.details = `Erreur HTTP : ${robotsResponse ? robotsResponse.status() : 'Pas de réponse'}`;
         } else {
-            // Get the raw text content
-            const rawText = await page.evaluate(() => document.body.textContent || document.body.innerText || '');
+            // Récupération du texte brut
+            const rawText = await page.evaluate(() => document.body ? (document.body.textContent || document.body.innerText || '') : '');
             const lines = rawText.split('\n').filter(l => l.trim().length > 0);
-            console.log(`[MODULE-ROBOTS] Found ${lines.length} lines in robots.txt`);
+            console.log(`[MODULE-ROBOTS] ${lines.length} lignes trouvées dans robots.txt`);
 
-            // Find sitemap lines
+            // Recherche des lignes Sitemap
             const sitemapLines = [];
             const allSitemapUrls = [];
             lines.forEach((line, idx) => {
@@ -52,18 +55,37 @@ export async function auditRobotsSitemap(url, auditId) {
             });
 
             if (allSitemapUrls.length > 0) {
-                robotsResult.sitemap.url = allSitemapUrls[0]; // Primary sitemap
+                robotsResult.sitemap.url = allSitemapUrls[0];
                 robotsResult.sitemap.allUrls = allSitemapUrls;
                 robotsResult.sitemap.statut = 'EN_COURS';
-                console.log(`[MODULE-ROBOTS] Found ${allSitemapUrls.length} sitemap URLs. Primary: ${allSitemapUrls[0]}`);
+                console.log(`[MODULE-ROBOTS] ${allSitemapUrls.length} sitemaps trouvés. Principal : ${allSitemapUrls[0]}`);
+            } else {
+                // Fallback : Test des URLs sitemap standards
+                const baseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+                console.log(`[MODULE-ROBOTS] Aucun sitemap dans robots.txt. Test des fallbacks...`);
+
+                for (const fallback of [`${baseUrl}/sitemap.xml`, `${baseUrl}/sitemap_index.xml`]) {
+                    try {
+                        const check = await page.goto(fallback, { waitUntil: 'domcontentloaded', timeout: 10000 });
+                        if (check && check.status() < 400) {
+                            robotsResult.sitemap.url = fallback;
+                            robotsResult.sitemap.statut = 'EN_COURS';
+                            console.log(`[MODULE-ROBOTS] Sitemap trouvé via fallback : ${fallback}`);
+                            break;
+                        }
+                    } catch { }
+                }
             }
 
-            // Rebuild the page content with professional styling and highlighting
+            // Reconstruction de la page avec un style pro et mise en évidence
             const contentDimensions = await page.evaluate((sitemapLineIndices) => {
+                if (!document.body) {
+                    const body = document.createElement('body');
+                    document.documentElement.appendChild(body);
+                }
                 const text = document.body.textContent || document.body.innerText || '';
                 const lines = text.split('\n');
 
-                // Clear body and rebuild
                 document.body.innerHTML = '';
                 document.body.style.cssText = 'background: #0d1117; margin: 0; padding: 0; overflow: hidden;';
 
@@ -81,12 +103,11 @@ export async function auditRobotsSitemap(url, auditId) {
                 `;
 
                 lines.forEach((line, idx) => {
-                    if (line.trim().length === 0 && idx > 0) return; // Skip empty lines except first
+                    if (line.trim().length === 0 && idx > 0) return;
                     const div = document.createElement('div');
                     div.textContent = line;
 
-                    const isSitemap = sitemapLineIndices.includes(idx);
-                    if (isSitemap) {
+                    if (sitemapLineIndices.includes(idx)) {
                         div.style.cssText = `
                             background: rgba(56, 139, 253, 0.25);
                             border-left: 4px solid #58a6ff;
@@ -97,11 +118,11 @@ export async function auditRobotsSitemap(url, auditId) {
                             color: #ffffff;
                         `;
                     } else if (line.trim().startsWith('#')) {
-                        div.style.cssText = 'color: #6e7681; padding: 2px 0;'; // Comments in grey
+                        div.style.cssText = 'color: #6e7681; padding: 2px 0;';
                     } else if (line.toLowerCase().startsWith('user-agent')) {
-                        div.style.cssText = 'color: #ff7b72; padding: 2px 0; font-weight: bold;'; // User-agent in red
+                        div.style.cssText = 'color: #ff7b72; padding: 2px 0; font-weight: bold;';
                     } else if (line.toLowerCase().startsWith('allow') || line.toLowerCase().startsWith('disallow')) {
-                        div.style.cssText = 'color: #7ee787; padding: 2px 0;'; // Allow/Disallow in green
+                        div.style.cssText = 'color: #7ee787; padding: 2px 0;';
                     } else {
                         div.style.cssText = 'padding: 2px 0;';
                     }
@@ -109,40 +130,17 @@ export async function auditRobotsSitemap(url, auditId) {
                 });
 
                 document.body.appendChild(container);
-
-                // Measure actual content dimensions
                 const rect = container.getBoundingClientRect();
-                return {
-                    width: Math.ceil(rect.width) + 20,  // +20px padding
-                    height: Math.ceil(rect.height) + 20
-                };
+                return { width: Math.ceil(rect.width) + 20, height: Math.ceil(rect.height) + 20 };
             }, sitemapLines);
 
-            console.log(`[MODULE-ROBOTS] Content dimensions: ${contentDimensions.width}x${contentDimensions.height}`);
-
-            await page.waitForTimeout(500);
-
-            // Take full viewport screenshot
             const robotsBuffer = await page.screenshot({ fullPage: false });
-
-            // Programmatic crop based on measured content dimensions
             const meta = await sharp(robotsBuffer).metadata();
-            const cropWidth = Math.min(contentDimensions.width, meta.width);
-            const cropHeight = Math.min(contentDimensions.height, meta.height);
-
-            // Safety: minimum dimensions
-            const finalWidth = Math.max(cropWidth, 400);
-            const finalHeight = Math.max(cropHeight, 100);
-
-            console.log(`[MODULE-ROBOTS] Cropping to: ${finalWidth}x${finalHeight}`);
+            const finalWidth = Math.min(Math.max(contentDimensions.width, 400), meta.width);
+            const finalHeight = Math.min(Math.max(contentDimensions.height, 100), meta.height);
 
             const robotsFinalBuffer = await sharp(robotsBuffer)
-                .extract({
-                    left: 0,
-                    top: 0,
-                    width: Math.min(finalWidth, meta.width),
-                    height: Math.min(finalHeight, meta.height)
-                })
+                .extract({ left: 0, top: 0, width: finalWidth, height: finalHeight })
                 .toBuffer();
 
             robotsResult.robots_txt.capture = await uploadBufferToCloudinary(
@@ -151,88 +149,86 @@ export async function auditRobotsSitemap(url, auditId) {
             robotsResult.robots_txt.statut = 'SUCCESS';
         }
 
-        // --- STAGE 2: Actual Sitemap Page ---
-        if (robotsResult.sitemap.url) {
-            console.log(`[MODULE-ROBOTS] Navigating to Actual Sitemap: ${robotsResult.sitemap.url}`);
-            try {
+        // --- ÉTAPE 2 : Capture du Sitemap ---
+        console.log(`[MODULE-ROBOTS] Navigation vers Sitemap : ${robotsResult.sitemap.url || 'NON DÉTECTÉ'}`);
+        try {
+            if (robotsResult.sitemap.url) {
                 await page.goto(robotsResult.sitemap.url, { waitUntil: 'networkidle', timeout: 30000 });
+            } else {
+                // Page d'erreur personnalisée si aucun sitemap n'est trouvé
+                await page.setContent(`
+                    <body style="background: #0d1117; color: #ff7b72; font-family: monospace; padding: 50px; text-align: center;">
+                        <h1 style="border-bottom: 1px solid #30363d; padding-bottom: 20px;">⚠️ Sitemap non détecté</h1>
+                        <p style="font-size: 18px; color: #c9d1d9;">Aucun lien sitemap n'a été trouvé dans robots.txt ni via fallback.</p>
+                    </body>
+                `);
+            }
 
-                // Apply professional CSS for sitemap too
-                const sitemapDimensions = await page.evaluate(() => {
-                    const text = document.body.textContent || document.body.innerText || '';
-                    const lines = text.split('\n');
+            const sitemapDimensions = await page.evaluate(() => {
+                if (!document.body) {
+                    const body = document.createElement('body');
+                    document.documentElement.appendChild(body);
+                }
+                const text = document.body.textContent || document.body.innerText || '';
+                const lines = text.split('\n');
 
-                    document.body.innerHTML = '';
-                    document.body.style.cssText = 'background: #0d1117; margin: 0; padding: 0; overflow: hidden;';
+                document.body.innerHTML = '';
+                document.body.style.cssText = 'background: #0d1117; margin: 0; padding: 0; overflow: hidden;';
 
-                    const container = document.createElement('div');
-                    container.style.cssText = `
-                        padding: 30px 40px;
-                        font-family: 'Fira Code', 'Courier New', monospace;
-                        font-size: 14px;
-                        line-height: 1.5;
-                        color: #c9d1d9;
-                        background: #0d1117;
-                        display: inline-block;
-                        min-width: 400px;
-                    `;
+                const container = document.createElement('div');
+                container.style.cssText = `
+                    padding: 30px 40px;
+                    font-family: 'Fira Code', 'Courier New', monospace;
+                    font-size: 14px;
+                    line-height: 1.5;
+                    color: #c9d1d9;
+                    background: #0d1117;
+                    display: inline-block;
+                    min-width: 400px;
+                `;
 
-                    // Show first ~40 lines of sitemap
+                if (document.querySelector('h1')) {
+                    container.innerHTML = document.body.innerHTML;
+                } else {
                     const maxLines = Math.min(lines.length, 40);
                     for (let i = 0; i < maxLines; i++) {
                         const div = document.createElement('div');
                         div.textContent = lines[i];
                         if (lines[i].trim().startsWith('<') || lines[i].includes('://')) {
-                            div.style.color = '#79c0ff'; // URLs in blue
+                            div.style.color = '#79c0ff';
                         }
                         container.appendChild(div);
                     }
+                }
 
-                    if (lines.length > 40) {
-                        const more = document.createElement('div');
-                        more.textContent = `... (${lines.length - 40} more lines)`;
-                        more.style.cssText = 'color: #6e7681; font-style: italic; margin-top: 10px;';
-                        container.appendChild(more);
-                    }
+                document.body.appendChild(container);
+                const rect = container.getBoundingClientRect();
+                return { width: Math.ceil(rect.width) + 20, height: Math.ceil(rect.height) + 20 };
+            });
 
-                    document.body.appendChild(container);
+            await page.waitForTimeout(500);
+            const sitemapBuffer = await page.screenshot({ fullPage: false });
+            const sMeta = await sharp(sitemapBuffer).metadata();
+            const sWidth = Math.min(Math.max(sitemapDimensions.width, 400), sMeta.width);
+            const sHeight = Math.min(Math.max(sitemapDimensions.height, 100), sMeta.height);
 
-                    const rect = container.getBoundingClientRect();
-                    return {
-                        width: Math.ceil(rect.width) + 20,
-                        height: Math.ceil(rect.height) + 20
-                    };
-                });
+            const sFinalBuffer = await sharp(sitemapBuffer)
+                .extract({ left: 0, top: 0, width: sWidth, height: sHeight })
+                .toBuffer();
 
-                await page.waitForTimeout(500);
-                const sitemapBuffer = await page.screenshot({ fullPage: false });
-                const sMeta = await sharp(sitemapBuffer).metadata();
+            robotsResult.sitemap.capture = await uploadBufferToCloudinary(
+                sFinalBuffer, `sitemap-final-${auditId}.png`, 'audit-captures'
+            );
+            robotsResult.sitemap.statut = robotsResult.sitemap.url ? 'SUCCESS' : 'WARNING';
 
-                const sWidth = Math.min(Math.max(sitemapDimensions.width, 400), sMeta.width);
-                const sHeight = Math.min(Math.max(sitemapDimensions.height, 100), sMeta.height);
-
-                const sitemapFinalBuffer = await sharp(sitemapBuffer)
-                    .extract({ left: 0, top: 0, width: sWidth, height: sHeight })
-                    .toBuffer();
-
-                robotsResult.sitemap.capture = await uploadBufferToCloudinary(
-                    sitemapFinalBuffer, `sitemap-final-${auditId}.png`, 'audit-captures'
-                );
-                robotsResult.sitemap.statut = 'SUCCESS';
-
-            } catch (sitemapErr) {
-                console.error('[MODULE-ROBOTS] Sitemap navigation error:', sitemapErr);
-                robotsResult.sitemap.statut = 'ERROR';
-                robotsResult.sitemap.details = `Erreur de navigation: ${sitemapErr.message}`;
-            }
-        } else {
-            robotsResult.sitemap.statut = 'SKIP';
-            robotsResult.sitemap.details = "Lien sitemap non trouvé dans robots.txt";
+        } catch (sitemapErr) {
+            console.error('[MODULE-ROBOTS] Erreur capture sitemap :', sitemapErr);
+            robotsResult.sitemap.statut = 'ERROR';
+            robotsResult.sitemap.details = `Erreur : ${sitemapErr.message}`;
         }
 
     } catch (err) {
-        console.error('[MODULE-ROBOTS] Global error:', err);
-        robotsResult.robots_txt.statut = 'ERROR';
+        console.error('[MODULE-ROBOTS] Erreur globale :', err);
     } finally {
         await browser.close();
     }
