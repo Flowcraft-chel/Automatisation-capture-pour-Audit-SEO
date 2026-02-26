@@ -45,6 +45,10 @@ scripts/
 *.pfx
 *.secret
 *.token
+get_refresh_token.mjs
+*.png
+/tmp/
+
 
 # Éditeurs
 .vscode/*
