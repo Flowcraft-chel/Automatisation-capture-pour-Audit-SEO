@@ -70,49 +70,69 @@ export async function auditRobotsSitemap(url, auditId) {
                 return { hasSitemap: sitemaps.length > 0, lines: sitemaps, firstUrl };
             });
 
-            // 2. Rendu DOM sélectif et Capture
+            // 2. Rendu DOM avec lignes de contexte autour du sitemap
             await page.evaluate((info) => {
                 if (!document.body) return;
                 const text = document.body.textContent || "";
                 const lines = text.split('\n');
 
                 document.body.innerHTML = '';
-                document.body.style.cssText = 'background: white !important; margin: 0; padding: 40px !important; color: black !important; font-family: monospace; font-size: 16px; line-height: 1.5; display: inline-block; min-width: 600px;';
+                document.body.style.cssText = 'background: white !important; margin: 0; padding: 0 !important;';
 
                 const container = document.createElement('div');
                 container.id = 'robots-capture-container';
-                container.style.cssText = 'display: inline-block; padding: 20px; border: 1px solid #ddd; background: #fafafa; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);';
+                container.style.cssText = 'display: inline-block; font-family: "Google Sans", Arial, sans-serif; font-size: 13px; line-height: 1.6; border: 1px solid #dadce0; background: #fff;';
 
                 if (info.hasSitemap) {
-                    const title = document.createElement('div');
-                    title.textContent = '📍 Lignes Sitemap extraites de robots.txt';
-                    title.style.cssText = 'color: #555; font-family: sans-serif; font-size: 14px; font-weight: bold; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 8px;';
-                    container.appendChild(title);
+                    // Collect indices of sitemap lines
+                    const sitemapIndices = new Set();
+                    info.lines.forEach(obj => sitemapIndices.add(obj.index));
 
-                    info.lines.forEach(obj => {
+                    // Build context: 2 lines before and 2 lines after each sitemap line
+                    const showIndices = new Set();
+                    for (const idx of sitemapIndices) {
+                        for (let i = Math.max(0, idx - 2); i <= Math.min(lines.length - 1, idx + 2); i++) {
+                            showIndices.add(i);
+                        }
+                    }
+
+                    const sortedIndices = [...showIndices].sort((a, b) => a - b);
+                    let lastIdx = -2;
+
+                    sortedIndices.forEach(idx => {
+                        // Add separator if there's a gap
+                        if (idx > lastIdx + 1 && lastIdx >= 0) {
+                            const sep = document.createElement('div');
+                            sep.textContent = '  ···';
+                            sep.style.cssText = 'color: #9aa0a6; font-style: italic; padding: 2px 12px; background: #f8f9fa; border-top: 1px solid #e8eaed; border-bottom: 1px solid #e8eaed;';
+                            container.appendChild(sep);
+                        }
+
                         const div = document.createElement('div');
-                        div.textContent = obj.text;
-                        div.style.cssText = 'background: #fff3cd !important; border-left: 5px solid #ffc107 !important; padding: 8px 15px !important; margin: 5px 0 !important; font-weight: bold; color: black !important;';
+                        div.textContent = lines[idx] || ' ';
+                        if (sitemapIndices.has(idx)) {
+                            // Sitemap line — highlighted
+                            div.style.cssText = 'background: #e8f0fe !important; border-left: 4px solid #1a73e8 !important; padding: 4px 12px !important; font-weight: 600; color: #1a73e8 !important; font-family: "Roboto Mono", monospace; font-size: 13px;';
+                        } else {
+                            // Context line
+                            div.style.cssText = 'padding: 2px 12px; color: #3c4043; font-family: "Roboto Mono", monospace; font-size: 13px;';
+                        }
                         container.appendChild(div);
+                        lastIdx = idx;
                     });
                 } else {
-                    const title = document.createElement('div');
-                    title.textContent = '📄 Fichier robots.txt (Aperçu complet)';
-                    title.style.cssText = 'color: #555; font-family: sans-serif; font-size: 14px; font-weight: bold; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 8px;';
-                    container.appendChild(title);
-
-                    lines.slice(0, 40).forEach(line => {
+                    // Affichage complet (max 40 lignes)
+                    lines.slice(0, 40).forEach((line, idx) => {
                         const div = document.createElement('div');
                         div.textContent = line || ' ';
-                        div.style.padding = '2px 0';
+                        div.style.cssText = 'padding: 2px 12px; color: #3c4043; font-family: "Roboto Mono", monospace; font-size: 13px;' +
+                            (idx % 2 === 0 ? 'background: #fff;' : 'background: #f8f9fa;');
                         container.appendChild(div);
                     });
-
                     if (lines.length > 40) {
                         const trunc = document.createElement('div');
-                        trunc.textContent = `... (${lines.length - 40} lignes supplémentaires tronquées)`;
-                        trunc.style.color = '#888';
-                        trunc.style.fontStyle = 'italic';
+                        trunc.textContent = `... (${lines.length - 40} lignes supplémentaires)`;
+                        trunc.style.cssText = 'color: #9aa0a6; font-style: italic; padding: 4px 12px;';
                         container.appendChild(trunc);
                     }
                 }
@@ -130,7 +150,6 @@ export async function auditRobotsSitemap(url, auditId) {
                 robotsBuffer = await page.screenshot({ fullPage: false });
             }
 
-            // Pas besoin d'IA supplémentaire car le conteneur est déjà clean et aux dimensions exactes
             robotsResult.robots_txt.capture = await uploadBufferToCloudinary(robotsBuffer, `robots-final-${auditId}.png`, 'audit-captures');
 
             if (sitemapInfo.firstUrl) robotsResult.sitemap.url = sitemapInfo.firstUrl;
@@ -156,51 +175,59 @@ export async function auditRobotsSitemap(url, auditId) {
             try {
                 await page.goto(robotsResult.sitemap.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
+                // Récupérer le contenu brut et le rendre en HTML stylé XML (max 15 lignes)
                 await page.evaluate(() => {
                     if (!document.body) return;
-                    const text = document.body.textContent || "";
+                    const rawText = document.body.textContent || document.body.innerText || "";
+                    const lines = rawText.split('\n').filter(l => l.trim()).slice(0, 15);
+
                     document.body.innerHTML = '';
-                    document.body.style.cssText = 'background: white !important; color: black !important; padding: 40px !important; font-family: monospace; font-size: 14px; white-space: pre-wrap;';
-                    document.body.textContent = text.split('\n').slice(0, 40).join('\n');
+                    document.body.style.cssText = 'background: white !important; margin: 0; padding: 0 !important;';
+
+                    const container = document.createElement('div');
+                    container.id = 'sitemap-capture-container';
+                    container.style.cssText = 'display: inline-block; font-family: "Roboto Mono", monospace; font-size: 13px; line-height: 1.7; border: 1px solid #dadce0; background: #fff; padding: 8px 0;';
+
+                    lines.forEach((line, idx) => {
+                        const div = document.createElement('div');
+                        div.style.cssText = 'padding: 1px 16px; white-space: nowrap;' +
+                            (idx % 2 === 0 ? 'background: #fff;' : 'background: #f8f9fa;');
+
+                        // Coloration syntaxique XML
+                        let html = line
+                            // Balises XML → violet
+                            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                            .replace(/(&lt;\/?[\w:-]+)/g, '<span style="color:#8250df;font-weight:600;">$1</span>')
+                            .replace(/(&gt;)/g, '<span style="color:#8250df;">$1</span>')
+                            // URLs → bleu cliquable
+                            .replace(/(https?:\/\/[^\s<&]+)/g, '<span style="color:#1a73e8;">$1</span>')
+                            // Attributs XML → vert
+                            .replace(/(\w+)(=)/g, '<span style="color:#1e8e3e;">$1</span>$2');
+
+                        div.innerHTML = html;
+                        container.appendChild(div);
+                    });
+
+                    document.body.appendChild(container);
                 });
 
-                await page.waitForTimeout(1000);
-                const sitemapBuffer = await page.screenshot({ fullPage: false });
-                const sitemapRawUrl = await uploadBufferToCloudinary(sitemapBuffer, `sitemap-raw-${auditId}.png`, 'audit-temp');
+                await page.waitForTimeout(500);
 
-                const sPrompt = `Cette image montre un sitemap.
-RÈGLES DE ROGNAGE :
-1. Garde le texte utile (URLs).
-2. Supprime l'espace blanc à droite et en bas.
-CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
-
-                const sAiRes = await analyzeImage(sitemapRawUrl, sPrompt);
-                const sMatch = sAiRes.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
-
-                if (sMatch) {
-                    let [_, sx, sy, sw, sh] = sMatch.map(Number);
-                    const smeta = await sharp(sitemapBuffer).metadata();
-                    sx = Math.max(0, sx); sy = Math.max(0, sy);
-                    sw = Math.min(sw, smeta.width - sx); sh = Math.min(sh, smeta.height - sy);
-
-                    if (sw > 50 && sh > 20) {
-                        const sFinal = await sharp(sitemapBuffer).extract({ left: sx, top: sy, width: sw, height: sh }).toBuffer();
-                        robotsResult.sitemap.capture = await uploadBufferToCloudinary(sFinal, `sitemap-final-${auditId}.png`, 'audit-captures');
-                        robotsResult.sitemap.statut = 'SUCCESS';
-                    } else {
-                        robotsResult.sitemap.capture = sitemapRawUrl;
-                        robotsResult.sitemap.statut = 'SUCCESS';
-                    }
+                const sitemapContainer = await page.$('#sitemap-capture-container');
+                let sitemapBuffer;
+                if (sitemapContainer) {
+                    sitemapBuffer = await sitemapContainer.screenshot();
                 } else {
-                    robotsResult.sitemap.capture = sitemapRawUrl;
-                    robotsResult.sitemap.statut = 'SUCCESS';
+                    sitemapBuffer = await page.screenshot({ fullPage: false });
                 }
+
+                robotsResult.sitemap.capture = await uploadBufferToCloudinary(sitemapBuffer, `sitemap-final-${auditId}.png`, 'audit-captures');
+                robotsResult.sitemap.statut = 'SUCCESS';
             } catch (err) {
                 console.error("[MODULE-ROBOTS] Erreur Sitemap:", err.message);
                 robotsResult.sitemap.statut = 'ERROR';
             }
         } else {
-            // Error Page Capture (Fond Blanc)
             console.log("[MODULE-ROBOTS] Sitemap NON DÉTECTÉ.");
             await page.setContent(`
                 <body style="background: white; color: #d73a49; font-family: sans-serif; padding: 60px; text-align: center; border: 15px solid #f6f8fa;">

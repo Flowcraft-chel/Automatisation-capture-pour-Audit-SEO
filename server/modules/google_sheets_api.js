@@ -315,9 +315,6 @@ function renderHtmlTable({ title, table }) {
     const headers = table[0] || [];
     const rows = table.slice(1);
 
-    // table width stable
-    const containerWidth = headers.length <= 2 ? 1100 : 1300;
-
     const ths = headers
         .map((h) => `<th>${escapeHtml(String(h ?? ""))}</th>`)
         .join("");
@@ -325,7 +322,14 @@ function renderHtmlTable({ title, table }) {
     const trs = rows
         .map((r) => {
             const tds = headers
-                .map((_, i) => `<td>${escapeHtml(String(r[i] ?? ""))}</td>`)
+                .map((_, i) => {
+                    const val = String(r[i] ?? "");
+                    // Detect URLs and make them blue like Google Sheets
+                    if (/^https?:\/\//i.test(val.trim())) {
+                        return `<td><span style="color:#1155cc;">${escapeHtml(val)}</span></td>`;
+                    }
+                    return `<td>${escapeHtml(val)}</td>`;
+                })
                 .join("");
             return `<tr>${tds}</tr>`;
         })
@@ -335,20 +339,43 @@ function renderHtmlTable({ title, table }) {
 <html lang="fr">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
-  body { margin: 0; background: #fff; font-family: Arial, sans-serif; }
-  .wrap { width: ${containerWidth}px; padding: 18px 18px 22px; }
-  .title { font-size: 16px; font-weight: 700; margin: 0 0 10px; color: #111; }
-  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  thead th { background: #f3f4f6; border: 1px solid #d1d5db; padding: 8px; font-size: 12px; text-align: left; }
-  tbody td { border: 1px solid #e5e7eb; padding: 7px 8px; font-size: 12px; vertical-align: top; word-break: break-word; white-space: normal; }
-  tbody tr:nth-child(even) td { background: #fafafa; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #fff; }
+  .wrap {
+    display: inline-block;
+    padding: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px;
+  }
+  table { border-collapse: collapse; }
+  thead th {
+    background: #f3f3f3;
+    border: 1px solid #e2e2e2;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #333;
+    text-align: left;
+    white-space: nowrap;
+  }
+  tbody td {
+    border: 1px solid #e2e2e2;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: #333;
+    vertical-align: top;
+    white-space: nowrap;
+    max-width: 700px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  tbody tr:nth-child(even) td { background: #f8f9fa; }
+  tbody tr:nth-child(odd) td { background: #fff; }
 </style>
 </head>
 <body>
   <div class="wrap" id="capture">
-    <div class="title">${escapeHtml(title)}</div>
     <table>
       <thead><tr>${ths}</tr></thead>
       <tbody>${trs}</tbody>

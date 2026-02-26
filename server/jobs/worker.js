@@ -382,7 +382,7 @@ export const initWorker = (io, db) => {
             if (await checkCancellation()) return;
             await updateStep('check_404', 'EN_COURS');
             if (sheetAuditUrl) {
-                const res404 = await check404(sheetAuditUrl, auditId, googleCookies);
+                const res404 = await check404(sheetAuditUrl, auditId);
                 await updateStep('check_404', res404.statut, res404.details, res404.capture);
                 if (audit.airtable_record_id) {
                     if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);

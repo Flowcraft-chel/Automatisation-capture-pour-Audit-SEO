@@ -160,15 +160,18 @@ async function auditPageSpeed(url, auditId, strategy) {
             await page.screenshot({ path: fullPath, fullPage: false });
         }
 
-        // ── 7. Smart crop with sharp: remove any remaining bottom padding ──
-        const meta = await sharp(fullPath).metadata();
-        // Keep at most 75% of the height (the score + metrics area)
-        const maxCropH = Math.min(meta.height, Math.floor(meta.height * 0.75));
+        // ── 7. Smart trim: remove bottom whitespace only, preserve the 4 gauges at the top ──
         const croppedPath = fullPath.replace('.png', '_cropped.png');
 
-        await sharp(fullPath)
-            .extract({ left: 0, top: 0, width: meta.width, height: maxCropH })
-            .toFile(croppedPath);
+        try {
+            // Trim white/blank areas but keep everything from the top (gauges + score + metrics)
+            await sharp(fullPath)
+                .trim({ threshold: 20 })
+                .toFile(croppedPath);
+        } catch {
+            // If trim fails (e.g. all white), just copy as-is
+            fs.copyFileSync(fullPath, croppedPath);
+        }
 
         // ── 8. Upload cropped version ──
         const cloudRes = await uploadToCloudinary(croppedPath, `audit-results/psi-${strategy}-${auditId}`);

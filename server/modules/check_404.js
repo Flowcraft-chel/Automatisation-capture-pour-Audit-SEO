@@ -1,53 +1,150 @@
-import { chromium } from 'playwright';
-import path from 'path';
-import fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
-import { uploadToCloudinary } from '../utils/cloudinary.js';
-import { analyzeImage } from '../utils/openai.js';
-
 /**
- * 404 Check — Capture from the Google Sheet audit "Erreurs 4xx et 5xx" tab
- * 
- * Process:
- * 1. Open the AUDIT sheet (not plan d'action)
- * 2. Navigate to "Erreurs 4xx et 5xx" tab
- * 3. Filter rows where "Code HTTP" = 404
- * 4. Keep only columns: "Page contenant le lien vers l'URL en erreur" + "Code HTTP"
- * 5. Capture screenshot, send to AI for cropping
- * 6. AI also extracts one of the 404 links → stored in "lien_404" field
+ * check_404.js
+ * Reads the "Erreurs 4xx et 5xx" tab from the audit Google Sheet via API,
+ * filters rows with HTTP code = 404,
+ * renders an HTML table (Google Sheets style), captures as PNG,
+ * and extracts the first 404 link.
  */
+import { google } from "googleapis";
+import { chromium } from "playwright";
+import fs from "fs";
+import path from "path";
+import { v4 as uuidv4 } from "uuid";
+import sharp from "sharp";
+import { uploadToCloudinary } from "../utils/cloudinary.js";
 
-const SHEETS_HIDE_CSS = `
-    .docs-menubar, .docs-toolbar-container, .docs-header-clip,
-    .grid-bottom-bar, .docs-sheet-tab-bar, #docs-header,
-    .docs-titlebar-container, .waffle-comments-overlay { display: none !important; }
-    body { margin: 0; padding: 0; }
-`;
+// ── Google Sheets helpers ──────────────────────────────────────────────────────
+function sheetsClient() {
+    const oauth2 = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
+    oauth2.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+    return google.sheets({ version: "v4", auth: oauth2 });
+}
 
-async function cropWithAI(imagePath, prompt) {
+function extractSpreadsheetId(url) {
+    if (!url) return null;
+    const m = String(url).match(/\/d\/([a-zA-Z0-9-_]+)/);
+    return m ? m[1] : null;
+}
+
+function norm(s) {
+    return String(s ?? "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "")
+        .replace(/\s+/g, " ");
+}
+
+function escapeHtml(s) {
+    return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+// ── Detect if a cell value looks like a URL ────────────────────────────────────
+function isUrl(val) {
+    return /^https?:\/\//i.test(String(val ?? "").trim());
+}
+
+// ── Render cell: make URLs blue like Google Sheets ─────────────────────────────
+function renderCell(val) {
+    const s = escapeHtml(String(val ?? ""));
+    if (isUrl(val)) {
+        return `<span style="color:#1155cc;">${s}</span>`;
+    }
+    return s;
+}
+
+// ── Build the HTML page (Google Sheets style) ──────────────────────────────────
+function renderSheetsHtml(headers, rows, title) {
+    const ths = headers.map(h => `<th>${escapeHtml(h)}</th>`).join("");
+    const trs = rows.map(r => {
+        const tds = headers.map((_, i) => `<td>${renderCell(r[i])}</td>`).join("");
+        return `<tr>${tds}</tr>`;
+    }).join("");
+
+    return `<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #fff; }
+  .wrap {
+    display: inline-block;
+    padding: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px;
+  }
+  table {
+    border-collapse: collapse;
+  }
+  thead th {
+    background: #f3f3f3;
+    border: 1px solid #e2e2e2;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #333;
+    text-align: left;
+    white-space: nowrap;
+  }
+  tbody td {
+    border: 1px solid #e2e2e2;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: #333;
+    vertical-align: top;
+    white-space: nowrap;
+    max-width: 600px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  tbody tr:nth-child(even) td { background: #f8f9fa; }
+  tbody tr:nth-child(odd) td { background: #fff; }
+</style>
+</head>
+<body>
+  <div class="wrap" id="capture">
+    <table>
+      <thead><tr>${ths}</tr></thead>
+      <tbody>${trs}</tbody>
+    </table>
+  </div>
+</body>
+</html>`;
+}
+
+// ── Convert HTML → PNG (tight fit) ─────────────────────────────────────────────
+async function htmlToPng(html, outPath) {
+    const browser = await chromium.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+
     try {
-        const sharp = (await import('sharp')).default;
-        const response = await analyzeImage(imagePath, prompt);
-        const match = response.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
-        if (!match) return { croppedPath: imagePath, aiResponse: response };
-        const [, x, y, w, h] = match.map(Number);
-        const meta = await sharp(imagePath).metadata();
-        const left = Math.min(x, meta.width - 10);
-        const top = Math.min(y, meta.height - 10);
-        const width = Math.min(w, meta.width - left);
-        const height = Math.min(h, meta.height - top);
-        if (width < 20 || height < 20) return { croppedPath: imagePath, aiResponse: response };
-        const croppedPath = imagePath.replace('.png', '_cropped.png');
-        await sharp(imagePath).extract({ left, top, width, height }).toFile(croppedPath);
-        fs.unlinkSync(imagePath);
-        return { croppedPath, aiResponse: response };
-    } catch (e) {
-        console.warn(`[404] AI crop failed: ${e.message}`);
-        return { croppedPath: imagePath, aiResponse: '' };
+        const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+        await page.setContent(html, { waitUntil: "load" });
+
+        const el = page.locator("#capture");
+        await el.waitFor({ state: "visible", timeout: 15000 });
+        await el.screenshot({ path: outPath });
+
+        // Trim any remaining whitespace around the table
+        try {
+            const buf = await sharp(outPath).trim({ threshold: 10 }).toBuffer();
+            fs.writeFileSync(outPath, buf);
+        } catch { /* trim may fail on very small images, keep as-is */ }
+    } finally {
+        await browser.close();
     }
 }
 
-export async function check404(sheetUrl, auditId, googleCookies) {
+// ── MAIN EXPORT ────────────────────────────────────────────────────────────────
+export async function check404(sheetUrl, auditId) {
     const result = { statut: 'SKIP', capture: null, lien404: null };
 
     if (!sheetUrl) {
@@ -55,238 +152,127 @@ export async function check404(sheetUrl, auditId, googleCookies) {
         return result;
     }
 
-    const browser = await chromium.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-    });
-    const context = await browser.newContext({
-        viewport: { width: 1600, height: 900 },
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
-        locale: 'fr-FR'
-    });
-
-    if (googleCookies && googleCookies.length) {
-        await context.addCookies(googleCookies);
+    const spreadsheetId = extractSpreadsheetId(sheetUrl);
+    if (!spreadsheetId) {
+        result.details = 'URL Google Sheet invalide';
+        return result;
     }
 
-    const page = await context.newPage();
-    page.setDefaultTimeout(90000);
-
     try {
-        console.log(`[404] Opening audit sheet...`);
-        await page.goto(sheetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        const sheets = sheetsClient();
 
-        // Wait for spreadsheet grid
-        try {
-            await page.waitForSelector('#waffle-grid-container', { state: 'visible', timeout: 20000 });
-        } catch {
-            await page.waitForSelector('body', { state: 'visible', timeout: 5000 });
-        }
-        await page.addStyleTag({ content: SHEETS_HIDE_CSS });
+        // Try to find the right tab name
+        const tabCandidates = ['Erreurs 4xx et 5xx', 'Erreurs 4xx', 'Erreurs', 'Errors', '404'];
+        let tabData = [];
+        let usedTab = null;
 
-        // Navigate to "Erreurs 4xx et 5xx" tab
-        const tabNames = ['Erreurs 4xx et 5xx', 'Erreurs 4xx', 'Erreurs', 'Errors', '404'];
-        let found = false;
+        // Get all sheet names first
+        const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+        const sheetNames = spreadsheet.data.sheets.map(s => s.properties.title);
+        console.log(`[404] Available tabs: ${sheetNames.join(', ')}`);
 
-        for (const tabName of tabNames) {
-            // Show tabs briefly
-            await page.evaluate(() => {
-                const bar = document.querySelector('.docs-sheet-tab-bar') || document.querySelector('.grid-bottom-bar');
-                if (bar) bar.style.display = 'block';
-            });
-            await page.waitForTimeout(1000);
-
-            const tabResult = await page.evaluate((name) => {
-                const tabSelectors = ['.docs-sheet-tab-name', '.docs-sheet-tab span', '.docs-sheet-tab .docs-sheet-tab-caption'];
-                let tabs = [];
-                for (const sel of tabSelectors) {
-                    tabs = Array.from(document.querySelectorAll(sel));
-                    if (tabs.length > 0) break;
+        for (const candidate of tabCandidates) {
+            const match = sheetNames.find(n => norm(n).includes(norm(candidate)));
+            if (match) {
+                console.log(`[404] Found matching tab: "${match}"`);
+                try {
+                    const res = await sheets.spreadsheets.values.get({
+                        spreadsheetId,
+                        range: `'${match.replace(/'/g, "''")}'!A1:ZZ`,
+                        valueRenderOption: "FORMATTED_VALUE",
+                    });
+                    tabData = res?.data?.values || [];
+                    usedTab = match;
+                } catch (e) {
+                    console.error(`[404] Error reading tab "${match}": ${e.message}`);
                 }
-                const target = tabs.find(t => t.innerText.trim().toLowerCase().includes(name.toLowerCase()));
-                if (!target) return { found: false };
-
-                const parent = target.closest('.docs-sheet-tab');
-                let gid = null;
-                if (parent?.id?.startsWith('sheet-button-')) gid = parent.id.replace('sheet-button-', '');
-                if (!gid && parent) {
-                    const dataId = parent.getAttribute('data-id');
-                    if (dataId) gid = dataId;
-                }
-                return { found: true, gid, name: target.innerText.trim() };
-            }, tabName);
-
-            if (tabResult.found) {
-                console.log(`[404] Found tab: "${tabResult.name}" (gid=${tabResult.gid})`);
-                if (tabResult.gid) {
-                    const url = new URL(page.url());
-                    url.hash = `gid=${tabResult.gid}`;
-                    await page.goto(url.toString(), { waitUntil: 'networkidle', timeout: 60000 });
-                }
-                await page.addStyleTag({ content: SHEETS_HIDE_CSS });
-                await page.waitForTimeout(3000);
-                found = true;
-                break;
+                if (tabData.length > 0) break;
             }
         }
 
-        if (!found) {
-            console.log('[404] No "Erreurs 4xx et 5xx" tab found in sheet');
-            result.details = 'Onglet "Erreurs 4xx et 5xx" non trouvé dans le Google Sheet';
+        if (tabData.length < 2) {
+            result.details = `Onglet "Erreurs 4xx et 5xx" non trouvé ou vide (tabs: ${sheetNames.join(', ')})`;
             return result;
         }
 
-        // Wait for waffle grid to load
-        try {
-            await page.waitForSelector('.waffle tbody tr', { state: 'attached', timeout: 15000 });
-        } catch (e) {
-            console.log('[404] .waffle not found after tab navigation');
-        }
+        console.log(`[404] Read ${tabData.length} rows from tab "${usedTab}"`);
 
-        // Filter & extract: keep only rows with Code HTTP = 404, show only 2 columns
-        const errorData = await page.evaluate(() => {
-            const tableSelectors = ['.waffle tbody tr', '.waffle tr', '#sheets-viewport table tr', '.grid-container table tr'];
-            let allRows = [];
-            for (const sel of tableSelectors) {
-                const elts = Array.from(document.querySelectorAll(sel));
-                allRows = elts.filter(el => !el.closest('#docs-header') && !el.closest('.grid-bottom-bar') && !el.closest('.docs-sheet-tab-bar'));
-                if (allRows.length > 1) break;
-            }
+        // Find headers
+        const headers = tabData[0];
+        const dataRows = tabData.slice(1);
 
-            if (allRows.length <= 1) return { error: 'No table rows found' };
-
-            // Find header row
-            const knownHeaders = ['url', 'page', 'lien', 'code', 'http', 'erreur', 'destination'];
-            let headerIdx = 0;
-            for (let i = 0; i < Math.min(allRows.length, 5); i++) {
-                const texts = Array.from(allRows[i].children).map(c => c.innerText.trim().toLowerCase());
-                if (texts.some(t => knownHeaders.some(kw => t.includes(kw)))) {
-                    headerIdx = i;
-                    break;
-                }
-            }
-
-            const rows = allRows.slice(headerIdx);
-            const headers = Array.from(rows[0]?.children || []);
-            const headerTexts = headers.map(h => h.innerText.trim().toLowerCase());
-
-            // Find "Page contenant le lien vers l'URL en erreur" column
-            const pageCol = headerTexts.findIndex(h =>
-                h.includes('page contenant') || h.includes('lien vers') || h.includes('page source') || h.includes('url')
-            );
-
-            // Find "Code HTTP" column
-            const codeCol = headerTexts.findIndex(h =>
-                h.includes('code http') || h.includes('code') || h.includes('status') || h.includes('http')
-            );
-
-            if (codeCol === -1) return { error: 'Colonne "Code HTTP" introuvable', headerTexts };
-
-            const tbody = rows[0]?.parentElement || document.querySelector('.waffle tbody');
-            if (!tbody) return { error: 'tbody not found' };
-
-            const dataRows = rows.slice(1);
-            let first404Url = null;
-            let count404 = 0;
-
-            // Filter: show only rows with Code HTTP = 404
-            dataRows.forEach(tr => {
-                const codeText = (tr.children[codeCol]?.innerText || '').trim();
-                const is404 = codeText === '404' || codeText.includes('404');
-                tr.style.display = is404 ? '' : 'none';
-                if (is404) {
-                    count404++;
-                    if (!first404Url && pageCol !== -1) {
-                        first404Url = (tr.children[pageCol]?.innerText || '').trim();
-                    }
-                }
-            });
-
-            // Sort 404s to top
-            dataRows.filter(tr => tr.style.display !== 'none').forEach(tr => tbody.appendChild(tr));
-            dataRows.filter(tr => tr.style.display === 'none').forEach(tr => tbody.appendChild(tr));
-
-            // Hide all columns except "Page contenant..." and "Code HTTP"
-            const keepCols = [pageCol, codeCol].filter(i => i !== -1);
-            rows.forEach(tr => {
-                Array.from(tr.children).forEach((td, idx) => {
-                    if (!keepCols.includes(idx)) td.style.display = 'none';
-                });
-            });
-
-            // Also hide overlay rows before header
-            for (let i = 0; i < headerIdx; i++) {
-                allRows[i].style.display = 'none';
-            }
-
-            return { first404Url, count404, totalRows: dataRows.length };
+        // Find "Code HTTP" column
+        const codeColIdx = headers.findIndex(h => {
+            const n = norm(h);
+            return n.includes('code http') || n.includes('code') || n.includes('status') || n.includes('http');
         });
 
-        if (errorData.error) {
-            console.log(`[404] Error during filtering: ${errorData.error}`);
-            result.details = errorData.error;
+        // Find "Page contenant le lien vers l'URL en erreur" column
+        const pageColIdx = headers.findIndex(h => {
+            const n = norm(h);
+            return n.includes('page contenant') || n.includes('lien vers') || n.includes('page source') || n.includes('url');
+        });
+
+        if (codeColIdx === -1) {
+            result.details = `Colonne "Code HTTP" introuvable (colonnes: ${headers.join(', ')})`;
             return result;
         }
 
-        console.log(`[404] Found ${errorData.count404} rows with Code HTTP 404 out of ${errorData.totalRows} total`);
+        console.log(`[404] Code HTTP column: ${codeColIdx} ("${headers[codeColIdx]}"), Page column: ${pageColIdx} ("${headers[pageColIdx] || 'N/A'}")`);
 
-        if (errorData.count404 === 0) {
+        // Filter: keep only rows with Code HTTP = 404
+        const rows404 = dataRows.filter(row => {
+            const code = String(row[codeColIdx] ?? "").trim();
+            return code === '404' || code.includes('404');
+        });
+
+        console.log(`[404] Found ${rows404.length} rows with Code 404 out of ${dataRows.length} total`);
+
+        if (rows404.length === 0) {
             result.statut = 'SKIP';
             result.details = 'Aucune erreur 404 trouvée';
             return result;
         }
 
-        // Extract first 404 URL directly
-        if (errorData.first404Url) {
-            result.lien404 = errorData.first404Url;
-            console.log(`[404] First 404 link: ${errorData.first404Url}`);
-        }
-
-        await page.waitForTimeout(1000);
-
-        // Take screenshot
-        const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
-        const tmpPath = path.join(tmpDir, `temp_404_${uuidv4()}.png`);
-        await page.screenshot({ path: tmpPath, fullPage: false });
-
-        const prompt = `Tu es un expert en rognage d'images.
-Cette image est une capture d'un onglet Google Sheets montrant les erreurs 404.
-Tu vois un tableau avec deux colonnes : "Page contenant le lien vers l'URL en erreur" et "Code HTTP".
-
-RÈGLES STRICTES :
-1. CONSERVE ABSOLUMENT la ligne d'en-tête avec les noms de colonnes
-2. Ne garde que les lignes avec le code 404
-3. Supprime tout ce qui n'est pas le tableau (menus, barres, marges vides)
-4. Le résultat doit être un tableau SERRÉ
-5. Extrais aussi UN des liens 404 visibles et renvoie-le
-
-Réponds avec :
-LIEN404: [un des liens 404 visibles dans le tableau]
-CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
-
-        const { croppedPath, aiResponse } = await cropWithAI(tmpPath, prompt);
-
-        // Try to extract link from AI response if we didn't get one from the DOM
-        if (!result.lien404 && aiResponse) {
-            const linkMatch = aiResponse.match(/LIEN404:\s*(.+)/i);
-            if (linkMatch) {
-                result.lien404 = linkMatch[1].trim();
-                console.log(`[404] AI extracted 404 link: ${result.lien404}`);
+        // Extract first 404 link
+        if (pageColIdx >= 0 && rows404.length > 0) {
+            const firstLink = String(rows404[0][pageColIdx] ?? "").trim();
+            if (firstLink) {
+                result.lien404 = firstLink;
+                console.log(`[404] First 404 link: ${firstLink}`);
             }
         }
 
-        const uploaded = await uploadToCloudinary(croppedPath, `audit-results/404-${auditId}`);
-        if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
-        if (fs.existsSync(tmpPath) && tmpPath !== croppedPath) fs.unlinkSync(tmpPath);
+        // Keep only the two key columns for the render
+        const keepHeaders = [];
+        const keepIndices = [];
 
-        result.capture = uploaded?.secure_url || uploaded?.url || uploaded;
+        if (pageColIdx >= 0) {
+            keepHeaders.push(headers[pageColIdx]);
+            keepIndices.push(pageColIdx);
+        }
+        keepHeaders.push(headers[codeColIdx]);
+        keepIndices.push(codeColIdx);
+
+        const projectedRows = rows404.map(r => keepIndices.map(i => r[i] ?? ""));
+
+        // Render HTML table in Google Sheets style
+        const html = renderSheetsHtml(keepHeaders, projectedRows, "Erreurs 404");
+
+        const tmpDir = process.env.RAILWAY_ENVIRONMENT ? "/tmp" : ".";
+        const pngPath = path.join(tmpDir, `temp_404_${uuidv4()}.png`);
+
+        await htmlToPng(html, pngPath);
+
+        const cloudRes = await uploadToCloudinary(pngPath, `audit-results/404-${auditId}`);
+        if (fs.existsSync(pngPath)) fs.unlinkSync(pngPath);
+
+        result.capture = cloudRes?.secure_url || cloudRes?.url || cloudRes;
         result.statut = 'SUCCESS';
 
     } catch (e) {
         result.details = e.message;
         console.error('[404] Error:', e.message);
-    } finally {
-        await browser.close();
     }
 
     return result;
