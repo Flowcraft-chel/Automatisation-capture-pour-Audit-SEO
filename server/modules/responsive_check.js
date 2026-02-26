@@ -50,7 +50,7 @@ export async function auditResponsive(url, auditId) {
                     break;
                 }
             }
-            await page.waitForTimeout(3000); // Laisse le temps aux iframes de se générer
+            await page.waitForTimeout(10000); // Laisse le temps aux iframes de se générer et charger sur tous les écrans
         } catch {
             console.log('[MODULE-RESPONSIVE] Échec de la saisie manuelle, tentative via paramètre URL seule.');
         }

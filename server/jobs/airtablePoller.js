@@ -24,7 +24,7 @@ async function syncAirtableToDb(io, db) {
 
     try {
         const records = await table.select({
-            filterByFormula: 'OR({Statut} = "A faire", {Statut} = "En cours")',
+            filterByFormula: 'OR({Statut} = "A faire", {Statut} = "En cours", {Statut} = "fait", {Statut} = "Erreur")',
             maxRecords: 50
         }).all();
 
@@ -64,8 +64,8 @@ async function syncAirtableToDb(io, db) {
                     existing.sheet_audit_url !== sheetAuditUrl ||
                     existing.sheet_plan_url !== sheetPlanUrl ||
                     existing.mrm_report_url !== mrmReportUrl ||
-                    (existing.statut_global !== targetLocalStatus && existing.statut_global !== 'EN_COURS');
-                // Note: If local is EN_COURS, we let the worker finish before marking 'TERMINE'
+                    existing.statut_global !== targetLocalStatus;
+                // If local is matching Airtable, or we just updated it, worker will see it.
 
                 if (hasChanged) {
                     console.log(`[POLLER] Updating local record ${existing.id} (Airtable: ${airtableStatus})`);

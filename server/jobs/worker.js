@@ -98,6 +98,16 @@ export const initWorker = (io, db) => {
                 }
             };
 
+            // Check if audit was cancelled or finished prematurely
+            const checkCancellation = async () => {
+                const currentAudit = await db.get('SELECT statut_global FROM audits WHERE id = ?', [auditId]);
+                if (!currentAudit || currentAudit.statut_global === 'TERMINE' || currentAudit.statut_global === 'Erreur') {
+                    console.log(`[WORKER] [JOB ${job.id}] Audit ${auditId} was CANCELLED or marked as FINISHED. Stopping worker.`);
+                    return true;
+                }
+                return false;
+            };
+
             // Sequence of steps
             // STEP 1: Robots & Sitemap
             console.log(`[WORKER] [JOB ${job.id}] Executing Step: Robots & Sitemap...`);
@@ -132,6 +142,7 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 2: Logo Extraction
+            if (await checkCancellation()) return;
             console.log(`[WORKER] [JOB ${job.id}] Executing Step: Logo Extraction...`);
             await updateStep('logo', 'IA_EN_COURS');
             const logoResult = await extractLogo(siteUrl, auditId);
@@ -157,6 +168,7 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 4: Responsive Check
+            if (await checkCancellation()) return;
             try {
                 console.log(`[WORKER] [JOB ${job.id}] Executing Step: Responsive Check...`);
                 await updateStep('ami_responsive', 'EN_COURS');
@@ -243,6 +255,7 @@ export const initWorker = (io, db) => {
                     await updateStep(k, 'SKIP', 'Lien Google Sheet non fourni');
                 }
             } else {
+                if (await checkCancellation()) return;
                 console.log(`[WORKER] [JOB ${job.id}] Starting Google Sheets API Module...`);
                 // Définition de la correspondance entre les step keys du DB et les ID du script client
                 const sheetStepsMap = {
@@ -291,6 +304,7 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 9: Google Search Console
+            if (await checkCancellation()) return;
             try {
                 await updateStep('gsc_sitemaps', 'EN_COURS');
                 googleCookies = await getSessionCookies('google');
@@ -315,6 +329,7 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 10: MRM
+            if (await checkCancellation()) return;
             try {
                 await updateStep('mrm_profondeur', 'EN_COURS');
                 const mrmCookies = await getSessionCookies('mrm');
@@ -332,6 +347,7 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 11: Ubersuggest
+            if (await checkCancellation()) return;
             try {
                 await updateStep('ubersuggest_da', 'EN_COURS');
                 const uberCookies = await getSessionCookies('ubersuggest');
@@ -349,18 +365,21 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 12: Semrush
+            if (await checkCancellation()) return;
             await updateStep('semrush_authority', 'EN_COURS');
             const semRes = await captureSemrush(siteUrl, auditId);
             await updateStep('semrush_authority', semRes.statut, semRes.details, semRes.capture);
             if (audit.airtable_record_id && semRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_SEMRUSH', semRes.capture);
 
             // STEP 13: Ahrefs
+            if (await checkCancellation()) return;
             await updateStep('ahrefs_authority', 'EN_COURS');
             const ahrRes = await captureAhrefs(siteUrl, auditId);
             await updateStep('ahrefs_authority', ahrRes.statut, ahrRes.details, ahrRes.capture);
             if (audit.airtable_record_id && ahrRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_AHREF', ahrRes.capture);
 
             // STEP 14: 404 Check (from Sheet "Erreurs" tab)
+            if (await checkCancellation()) return;
             await updateStep('check_404', 'EN_COURS');
             if (sheetAuditUrl) {
                 const res404 = await check404(sheetAuditUrl, auditId, googleCookies);
@@ -374,6 +393,7 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 15: GSC Performance (Traffic) — requires Google cookies
+            if (await checkCancellation()) return;
             if (googleCookies) {
                 await updateStep('gsc_performance', 'EN_COURS');
                 const gscPerfRes = await captureGscPerformance(siteUrl, auditId, googleCookies);
