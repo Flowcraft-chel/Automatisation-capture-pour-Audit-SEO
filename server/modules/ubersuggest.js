@@ -60,7 +60,7 @@ export async function captureUbersuggest(siteUrl, auditId, cookies) {
             result.statut = 'SKIP'; result.details = 'Session Ubersuggest expirée'; return result;
         }
 
-        await page.waitForTimeout(8000); // Results take time
+        await page.waitForTimeout(15000); // Results in Ubersuggest can take significant time to render
 
         const tmpPath = path.resolve(`temp_uber_${uuidv4()}.png`);
         await page.screenshot({ path: tmpPath, fullPage: false });

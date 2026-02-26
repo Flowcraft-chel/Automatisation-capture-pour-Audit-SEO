@@ -30,8 +30,8 @@ export async function auditResponsive(url, auditId) {
 
     try {
         console.log(`[MODULE-RESPONSIVE] Starting check for ${domain}...`);
-        // Use networkidle to wait for all resources to load
-        await page.goto(amiUrl, { waitUntil: 'networkidle', timeout: 90000 });
+        // Use domcontentloaded for faster start, then wait specifically for what we need
+        await page.goto(amiUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
         // ── 1. Forcer la soumission de l'URL car l'URL parameter ne marche pas toujours ──
         console.log('[MODULE-RESPONSIVE] Saisie de l\'URL et validation...');

@@ -83,6 +83,21 @@ export const initWorker = (io, db) => {
                 console.log(`[WORKER] [JOB ${job.id}] Step ${stepKey}: ${status}`);
             };
 
+            // Timeout helper to prevent infinite hangs
+            const runWithTimeout = async (promise, ms, stepName) => {
+                let timeoutId;
+                const timeoutPromise = new Promise((_, reject) => {
+                    timeoutId = setTimeout(() => {
+                        reject(new Error(`TIMEOUT: L'étape ${stepName} a dépassé la limite de ${ms / 1000}s`));
+                    }, ms);
+                });
+                try {
+                    return await Promise.race([promise, timeoutPromise]);
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+            };
+
             // Sequence of steps
             // STEP 1: Robots & Sitemap
             console.log(`[WORKER] [JOB ${job.id}] Executing Step: Robots & Sitemap...`);
@@ -142,38 +157,53 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 4: Responsive Check
-            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Responsive Check...`);
-            await updateStep('ami_responsive', 'EN_COURS');
-            const respResult = await auditResponsive(siteUrl, auditId);
-            await updateStep('ami_responsive', respResult.statut, null, respResult.capture);
-            if (audit.airtable_record_id && respResult.capture) {
-                await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture);
+            try {
+                console.log(`[WORKER] [JOB ${job.id}] Executing Step: Responsive Check...`);
+                await updateStep('ami_responsive', 'EN_COURS');
+                const respResult = await runWithTimeout(auditResponsive(siteUrl, auditId), 180000, 'Responsive'); // 3m
+                await updateStep('ami_responsive', respResult.statut, null, respResult.capture);
+                if (audit.airtable_record_id && respResult.capture) {
+                    await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture);
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] Responsive Check failed:`, e.message);
+                await updateStep('ami_responsive', 'FAILED', e.message);
             }
 
             // STEP 5: PageSpeed Mobile
-            console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Mobile...`);
-            await updateStep('psi_mobile', 'EN_COURS');
-            const psiMobile = await auditPageSpeedMobile(siteUrl, auditId);
-            await updateStep('psi_mobile', psiMobile.statut, psiMobile.details, psiMobile.capture);
-            if (audit.airtable_record_id) {
-                if (psiMobile.score) {
-                    const mobileScorePercent = psiMobile.score / 100;
-                    await updateAirtableField(audit.airtable_record_id, 'pourcentage smartphone', mobileScorePercent);
+            try {
+                console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Mobile...`);
+                await updateStep('psi_mobile', 'EN_COURS');
+                const psiMobile = await runWithTimeout(auditPageSpeedMobile(siteUrl, auditId), 180000, 'PSI Mobile'); // 3m
+                await updateStep('psi_mobile', psiMobile.statut, psiMobile.details, psiMobile.capture);
+                if (audit.airtable_record_id) {
+                    if (psiMobile.score) {
+                        const mobileScorePercent = psiMobile.score / 100;
+                        await updateAirtableField(audit.airtable_record_id, 'pourcentage smartphone', mobileScorePercent);
+                    }
+                    if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Mobile', psiMobile.capture);
                 }
-                if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Mobile', psiMobile.capture);
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] PSI Mobile failed:`, e.message);
+                await updateStep('psi_mobile', 'FAILED', e.message);
             }
 
             // STEP 6: PageSpeed Desktop
-            console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Desktop...`);
-            await updateStep('psi_desktop', 'EN_COURS');
-            const psiDesktop = await auditPageSpeedDesktop(siteUrl, auditId);
-            await updateStep('psi_desktop', psiDesktop.statut, psiDesktop.details, psiDesktop.capture);
-            if (audit.airtable_record_id) {
-                if (psiDesktop.score) {
-                    const desktopScorePercent = psiDesktop.score / 100;
-                    await updateAirtableField(audit.airtable_record_id, 'pourcentage desktop', desktopScorePercent);
+            try {
+                console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Desktop...`);
+                await updateStep('psi_desktop', 'EN_COURS');
+                const psiDesktop = await runWithTimeout(auditPageSpeedDesktop(siteUrl, auditId), 180000, 'PSI Desktop'); // 3m
+                await updateStep('psi_desktop', psiDesktop.statut, psiDesktop.details, psiDesktop.capture);
+                if (audit.airtable_record_id) {
+                    if (psiDesktop.score) {
+                        const desktopScorePercent = psiDesktop.score / 100;
+                        await updateAirtableField(audit.airtable_record_id, 'pourcentage desktop', desktopScorePercent);
+                    }
+                    if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Desktop', psiDesktop.capture);
                 }
-                if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Desktop', psiDesktop.capture);
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] PSI Desktop failed:`, e.message);
+                await updateStep('psi_desktop', 'FAILED', e.message);
             }
 
             // ──────────────────────────────────────────────────────────────────
@@ -261,42 +291,61 @@ export const initWorker = (io, db) => {
             }
 
             // STEP 9: Google Search Console
-            await updateStep('gsc_sitemaps', 'EN_COURS');
-            googleCookies = await getSessionCookies('google'); // Reuse instead of re-declare
-            if (!googleCookies) {
-                await updateStep('gsc_sitemaps', 'SKIP', 'Session Google non connectée');
-                await updateStep('gsc_https', 'SKIP', 'Session Google non connectée');
-            } else {
-                const gscSitRes = await captureGscSitemaps(siteUrl, auditId, googleCookies);
-                await updateStep('gsc_sitemaps', gscSitRes.statut, gscSitRes.details, gscSitRes.capture);
-                if (audit.airtable_record_id && gscSitRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_sitemap_declaré', gscSitRes.capture);
+            try {
+                await updateStep('gsc_sitemaps', 'EN_COURS');
+                googleCookies = await getSessionCookies('google');
+                if (!googleCookies) {
+                    await updateStep('gsc_sitemaps', 'SKIP', 'Session Google non connectée');
+                    await updateStep('gsc_https', 'SKIP', 'Session Google non connectée');
+                } else {
+                    console.log(`[WORKER] [JOB ${job.id}] Executing Step: GSC Sitemaps...`);
+                    const gscSitRes = await runWithTimeout(captureGscSitemaps(siteUrl, auditId, googleCookies), 240000, 'GSC Sitemaps'); // 4m
+                    await updateStep('gsc_sitemaps', gscSitRes.statut, gscSitRes.details, gscSitRes.capture);
+                    if (audit.airtable_record_id && gscSitRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_sitemap_declaré', gscSitRes.capture);
 
-                await updateStep('gsc_https', 'EN_COURS');
-                const gscHttpsRes = await captureGscHttps(siteUrl, auditId, googleCookies);
-                await updateStep('gsc_https', gscHttpsRes.statut, gscHttpsRes.details, gscHttpsRes.capture);
-                if (audit.airtable_record_id && gscHttpsRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_https', gscHttpsRes.capture);
+                    await updateStep('gsc_https', 'EN_COURS');
+                    console.log(`[WORKER] [JOB ${job.id}] Executing Step: GSC HTTPS...`);
+                    const gscHttpsRes = await runWithTimeout(captureGscHttps(siteUrl, auditId, googleCookies), 240000, 'GSC HTTPS'); // 4m
+                    await updateStep('gsc_https', gscHttpsRes.statut, gscHttpsRes.details, gscHttpsRes.capture);
+                    if (audit.airtable_record_id && gscHttpsRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_https', gscHttpsRes.capture);
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] GSC Core steps failed:`, e.message);
+                await updateStep('gsc_sitemaps', 'FAILED', e.message);
             }
 
             // STEP 10: MRM
-            await updateStep('mrm_profondeur', 'EN_COURS');
-            const mrmCookies = await getSessionCookies('mrm');
-            if (!mrmCookies || !audit.mrm_report_url) {
-                await updateStep('mrm_profondeur', 'SKIP', !mrmCookies ? 'Session MRM non configurée' : 'Lien MRM non fourni');
-            } else {
-                const mrmRes = await captureMrmProfondeur(audit.mrm_report_url, auditId, mrmCookies);
-                await updateStep('mrm_profondeur', mrmRes.statut, mrmRes.details, mrmRes.capture);
-                if (audit.airtable_record_id && mrmRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics', mrmRes.capture);
+            try {
+                await updateStep('mrm_profondeur', 'EN_COURS');
+                const mrmCookies = await getSessionCookies('mrm');
+                if (!mrmCookies || !audit.mrm_report_url) {
+                    await updateStep('mrm_profondeur', 'SKIP', !mrmCookies ? 'Session MRM non configurée' : 'Lien MRM non fourni');
+                } else {
+                    console.log(`[WORKER] [JOB ${job.id}] Executing Step: MRM...`);
+                    const mrmRes = await runWithTimeout(captureMrmProfondeur(audit.mrm_report_url, auditId, mrmCookies), 240000, 'MRM'); // 4m
+                    await updateStep('mrm_profondeur', mrmRes.statut, mrmRes.details, mrmRes.capture);
+                    if (audit.airtable_record_id && mrmRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics', mrmRes.capture);
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] MRM failed:`, e.message);
+                await updateStep('mrm_profondeur', 'FAILED', e.message);
             }
 
             // STEP 11: Ubersuggest
-            await updateStep('ubersuggest_da', 'EN_COURS');
-            const uberCookies = await getSessionCookies('ubersuggest');
-            if (!uberCookies) {
-                await updateStep('ubersuggest_da', 'SKIP', 'Session Ubersuggest non configurée');
-            } else {
-                const uberRes = await captureUbersuggest(siteUrl, auditId, uberCookies);
-                await updateStep('ubersuggest_da', uberRes.statut, uberRes.details, uberRes.capture);
-                if (audit.airtable_record_id && uberRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_UBERSUGGEST', uberRes.capture);
+            try {
+                await updateStep('ubersuggest_da', 'EN_COURS');
+                const uberCookies = await getSessionCookies('ubersuggest');
+                if (!uberCookies) {
+                    await updateStep('ubersuggest_da', 'SKIP', 'Session Ubersuggest non configurée');
+                } else {
+                    console.log(`[WORKER] [JOB ${job.id}] Executing Step: Ubersuggest...`);
+                    const uberRes = await runWithTimeout(captureUbersuggest(siteUrl, auditId, uberCookies), 240000, 'Ubersuggest'); // 4m
+                    await updateStep('ubersuggest_da', uberRes.statut, uberRes.details, uberRes.capture);
+                    if (audit.airtable_record_id && uberRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_UBERSUGGEST', uberRes.capture);
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] Ubersuggest failed:`, e.message);
+                await updateStep('ubersuggest_da', 'FAILED', e.message);
             }
 
             // STEP 12: Semrush
