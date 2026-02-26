@@ -173,56 +173,67 @@ export async function auditRobotsSitemap(url, auditId) {
         if (robotsResult.sitemap.url) {
             console.log(`[MODULE-ROBOTS] Capture Sitemap : ${robotsResult.sitemap.url}`);
             try {
-                await page.goto(robotsResult.sitemap.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-                // Récupérer le contenu brut et le rendre en HTML stylé XML (max 15 lignes)
-                await page.evaluate(() => {
-                    if (!document.body) return;
-                    const rawText = document.body.textContent || document.body.innerText || "";
-                    const lines = rawText.split('\n').filter(l => l.trim()).slice(0, 15);
-
-                    document.body.innerHTML = '';
-                    document.body.style.cssText = 'background: white !important; margin: 0; padding: 0 !important;';
-
-                    const container = document.createElement('div');
-                    container.id = 'sitemap-capture-container';
-                    container.style.cssText = 'display: inline-block; font-family: "Roboto Mono", monospace; font-size: 13px; line-height: 1.7; border: 1px solid #dadce0; background: #fff; padding: 8px 0;';
-
-                    lines.forEach((line, idx) => {
-                        const div = document.createElement('div');
-                        div.style.cssText = 'padding: 1px 16px; white-space: nowrap;' +
-                            (idx % 2 === 0 ? 'background: #fff;' : 'background: #f8f9fa;');
-
-                        // Coloration syntaxique XML
-                        let html = line
-                            // Balises XML → violet
-                            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                            .replace(/(&lt;\/?[\w:-]+)/g, '<span style="color:#8250df;font-weight:600;">$1</span>')
-                            .replace(/(&gt;)/g, '<span style="color:#8250df;">$1</span>')
-                            // URLs → bleu cliquable
-                            .replace(/(https?:\/\/[^\s<&]+)/g, '<span style="color:#1a73e8;">$1</span>')
-                            // Attributs XML → vert
-                            .replace(/(\w+)(=)/g, '<span style="color:#1e8e3e;">$1</span>$2');
-
-                        div.innerHTML = html;
-                        container.appendChild(div);
+                // Fetch the raw sitemap content first (XML pages don't have standard document.body)
+                const sitemapResponse = await page.goto(robotsResult.sitemap.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                let rawText = '';
+                try {
+                    rawText = await sitemapResponse.text();
+                } catch {
+                    // Fallback: try to get text from page
+                    rawText = await page.evaluate(() => {
+                        return document.body?.textContent || document.documentElement?.textContent || '';
                     });
-
-                    document.body.appendChild(container);
-                });
-
-                await page.waitForTimeout(500);
-
-                const sitemapContainer = await page.$('#sitemap-capture-container');
-                let sitemapBuffer;
-                if (sitemapContainer) {
-                    sitemapBuffer = await sitemapContainer.screenshot();
-                } else {
-                    sitemapBuffer = await page.screenshot({ fullPage: false });
                 }
 
-                robotsResult.sitemap.capture = await uploadBufferToCloudinary(sitemapBuffer, `sitemap-final-${auditId}.png`, 'audit-captures');
-                robotsResult.sitemap.statut = 'SUCCESS';
+                console.log(`[MODULE-ROBOTS] Sitemap raw text length: ${rawText.length}`);
+
+                // Split into lines and keep max 15 non-empty lines
+                const lines = rawText.split('\n').filter(l => l.trim()).slice(0, 15);
+
+                if (lines.length === 0) {
+                    robotsResult.sitemap.statut = 'WARNING';
+                    robotsResult.sitemap.capture = null;
+                    console.log('[MODULE-ROBOTS] Sitemap content is empty');
+                } else {
+                    // Build styled HTML with XML syntax highlighting
+                    const htmlLines = lines.map((line, idx) => {
+                        let html = line
+                            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                            // XML tags → purple
+                            .replace(/(&lt;\/?[\w:-]+)/g, '<span style="color:#8250df;font-weight:600;">$1</span>')
+                            .replace(/(&gt;)/g, '<span style="color:#8250df;">$1</span>')
+                            // URLs → blue
+                            .replace(/(https?:\/\/[^\s<&]+)/g, '<span style="color:#1a73e8;">$1</span>')
+                            // XML attributes → green
+                            .replace(/(\w+)(=)/g, '<span style="color:#1e8e3e;">$1</span>$2');
+
+                        const bg = idx % 2 === 0 ? '#fff' : '#f8f9fa';
+                        return `<div style="padding:1px 16px;white-space:nowrap;background:${bg};">${html}</div>`;
+                    }).join('');
+
+                    const sitemapHtml = `<!doctype html>
+<html><head><meta charset="utf-8"/><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#fff;}</style></head>
+<body>
+<div id="sitemap-capture-container" style="display:inline-block;font-family:'Roboto Mono',monospace;font-size:13px;line-height:1.7;border:1px solid #dadce0;background:#fff;padding:8px 0;">
+${htmlLines}
+</div>
+</body></html>`;
+
+                    await page.setContent(sitemapHtml, { waitUntil: 'load' });
+                    await page.waitForTimeout(500);
+
+                    const sitemapContainer = await page.$('#sitemap-capture-container');
+                    let sitemapBuffer;
+                    if (sitemapContainer) {
+                        sitemapBuffer = await sitemapContainer.screenshot();
+                    } else {
+                        sitemapBuffer = await page.screenshot({ fullPage: false });
+                    }
+
+                    robotsResult.sitemap.capture = await uploadBufferToCloudinary(sitemapBuffer, `sitemap-final-${auditId}.png`, 'audit-captures');
+                    robotsResult.sitemap.statut = 'SUCCESS';
+                    console.log('[MODULE-ROBOTS] ✅ Sitemap captured successfully');
+                }
             } catch (err) {
                 console.error("[MODULE-ROBOTS] Erreur Sitemap:", err.message);
                 robotsResult.sitemap.statut = 'ERROR';
