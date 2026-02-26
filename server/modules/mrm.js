@@ -30,23 +30,13 @@ async function cropWithAI(imagePath, prompt) {
     }
 }
 
-//  MY RANKING METRICS — Profondeur des pages arh ça m'énerve c'est trop long là
-export async function captureMrmProfondeur(mrmReportUrl, auditId, encryptedCookies) {
+//  MY RANKING METRICS — Profondeur des pages
+export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
     const result = { statut: 'ERROR', capture: null };
 
-    // Decrypter et coller les cookies
-    let cookies = [];
-    if (encryptedCookies) {
-        try {
-            cookies = JSON.parse(decrypt(encryptedCookies));
-        } catch (e) {
-            result.statut = 'SKIP';
-            result.details = 'Cookies MRM invalides ou expirés';
-            return result;
-        }
-    } else {
+    if (!cookies || !cookies.length) {
         result.statut = 'SKIP';
-        result.details = 'Session MRM non configurée';
+        result.details = 'Session MRM non configurée ou invalide';
         return result;
     }
 

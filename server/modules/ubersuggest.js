@@ -27,15 +27,13 @@ async function cropWithAI(imagePath, prompt) {
 }
 
 // ── UBERSUGGEST — Domain Authority ───────────────────────────────────────────
-export async function captureUbersuggest(siteUrl, auditId, encryptedCookies) {
+export async function captureUbersuggest(siteUrl, auditId, cookies) {
     const result = { statut: 'ERROR', capture: null };
 
-    let cookies = [];
-    if (encryptedCookies) {
-        try { cookies = JSON.parse(decrypt(encryptedCookies)); }
-        catch { result.statut = 'SKIP'; result.details = 'Cookies Ubersuggest invalides'; return result; }
-    } else {
-        result.statut = 'SKIP'; result.details = 'Session Ubersuggest non configurée'; return result;
+    if (!cookies || !cookies.length) {
+        result.statut = 'SKIP';
+        result.details = 'Session Ubersuggest non configurée ou invalide';
+        return result;
     }
 
     const browser = await chromium.launch({

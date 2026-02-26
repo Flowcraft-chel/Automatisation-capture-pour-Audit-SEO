@@ -333,11 +333,11 @@ export const initWorker = (io, db) => {
 
             // STEP 11: Ubersuggest
             await updateStep('ubersuggest_da', 'EN_COURS');
-            const uberSession = await db.get('SELECT encrypted_cookies FROM user_sessions WHERE user_id = ? AND service = ? ORDER BY created_at DESC LIMIT 1', [userId, 'ubersuggest']);
-            if (!uberSession) {
+            const uberCookies = await getSessionCookies('ubersuggest');
+            if (!uberCookies) {
                 await updateStep('ubersuggest_da', 'SKIP', 'Session Ubersuggest non configurée');
             } else {
-                const uberRes = await captureUbersuggest(siteUrl, auditId, uberSession.encrypted_cookies);
+                const uberRes = await captureUbersuggest(siteUrl, auditId, uberCookies);
                 await updateStep('ubersuggest_da', uberRes.statut, uberRes.details, uberRes.capture);
                 if (audit.airtable_record_id && uberRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_UBERSUGGEST', uberRes.capture);
             }

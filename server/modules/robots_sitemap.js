@@ -42,21 +42,20 @@ export async function auditRobotsSitemap(url, auditId) {
 
             // Find sitemap lines
             const sitemapLines = [];
-            let firstSitemapUrl = null;
+            const allSitemapUrls = [];
             lines.forEach((line, idx) => {
                 if (line.toLowerCase().includes('sitemap:')) {
                     sitemapLines.push(idx);
-                    if (!firstSitemapUrl) {
-                        const match = line.match(/sitemaps?:\s*(https?:\/\/\S+)/i);
-                        if (match) firstSitemapUrl = match[1];
-                    }
+                    const match = line.match(/sitemaps?:\s*(https?:\/\/\S+)/i);
+                    if (match) allSitemapUrls.push(match[1]);
                 }
             });
 
-            if (firstSitemapUrl) {
-                robotsResult.sitemap.url = firstSitemapUrl;
+            if (allSitemapUrls.length > 0) {
+                robotsResult.sitemap.url = allSitemapUrls[0]; // Primary sitemap
+                robotsResult.sitemap.allUrls = allSitemapUrls;
                 robotsResult.sitemap.statut = 'EN_COURS';
-                console.log(`[MODULE-ROBOTS] Found sitemap URL: ${firstSitemapUrl}`);
+                console.log(`[MODULE-ROBOTS] Found ${allSitemapUrls.length} sitemap URLs. Primary: ${allSitemapUrls[0]}`);
             }
 
             // Rebuild the page content with professional styling and highlighting
@@ -89,13 +88,13 @@ export async function auditRobotsSitemap(url, auditId) {
                     const isSitemap = sitemapLineIndices.includes(idx);
                     if (isSitemap) {
                         div.style.cssText = `
-                            background: rgba(56, 139, 253, 0.15);
-                            border-left: 3px solid #58a6ff;
+                            background: rgba(56, 139, 253, 0.25);
+                            border-left: 4px solid #58a6ff;
                             padding: 6px 12px;
-                            margin: 4px 0;
+                            margin: 6px 0;
                             border-radius: 4px;
                             font-weight: bold;
-                            color: #79c0ff;
+                            color: #ffffff;
                         `;
                     } else if (line.trim().startsWith('#')) {
                         div.style.cssText = 'color: #6e7681; padding: 2px 0;'; // Comments in grey
@@ -226,9 +225,9 @@ export async function auditRobotsSitemap(url, auditId) {
                 robotsResult.sitemap.statut = 'ERROR';
                 robotsResult.sitemap.details = `Erreur de navigation: ${sitemapErr.message}`;
             }
-        } else if (robotsResult.sitemap.statut !== 'SUCCESS') {
-            robotsResult.sitemap.statut = 'ERROR';
-            robotsResult.sitemap.details = "Lien non trouvé dans robots.txt";
+        } else {
+            robotsResult.sitemap.statut = 'SKIP';
+            robotsResult.sitemap.details = "Lien sitemap non trouvé dans robots.txt";
         }
 
     } catch (err) {

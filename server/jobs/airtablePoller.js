@@ -133,11 +133,12 @@ async function syncAirtableToDb(io, db) {
                     }
                 }
 
-                // 3. Re-trigger logic: If "A faire" in Airtable AND local status is terminal (TERMINE or ERREUR)
-                if (airtableStatus === 'A faire' && existing.statut_global !== 'EN_ATTENTE' && existing.statut_global !== 'EN_COURS') {
-                    console.log(`[POLLER] Re-triggering audit ${existing.id} from Airtable.`);
+                // 3. Re-trigger logic: If "A faire" in Airtable AND local status is not already "EN_ATTENTE"
+                // We allow re-trigger even from "EN_COURS" because the user might have clicked "A faire" to restart a stuck job.
+                if (airtableStatus === 'A faire' && existing.statut_global !== 'EN_ATTENTE') {
+                    console.log(`[POLLER] Re-triggering audit ${existing.id} from Airtable (Force Reset).`);
                     await db.run('UPDATE audits SET statut_global = "EN_ATTENTE" WHERE id = ?', [existing.id]);
-                    await db.run('UPDATE audit_steps SET statut = "EN_ATTENTE", output_cloudinary_url = NULL WHERE audit_id = ?', [existing.id]);
+                    await db.run('UPDATE audit_steps SET statut = "EN_ATTENTE", output_cloudinary_url = NULL, details = NULL WHERE audit_id = ?', [existing.id]);
 
                     await auditQueue.add(`audit-${existing.id}`, { auditId: existing.id, userId: defaultUser.id }, {
                         attempts: 3,
