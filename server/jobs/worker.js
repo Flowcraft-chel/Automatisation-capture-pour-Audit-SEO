@@ -148,86 +148,8 @@ export const initWorker = (io, db) => {
                 await updateStep('sitemap', 'FAILED', e.message);
             }
 
-            // STEP 2: Logo Extraction
-            if (await checkCancellation()) return;
-            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Logo Extraction...`);
-            await updateStep('logo', 'IA_EN_COURS');
-            const logoResult = await extractLogo(siteUrl, auditId);
-
-            await updateStep('logo', logoResult.statut, logoResult.details, logoResult.url);
-
-            // Sync Logo to Airtable
-            if (audit.airtable_record_id) {
-                if (logoResult.statut === 'SUCCESS' && logoResult.url) {
-                    console.log(`[WORKER] [JOB ${job.id}] Syncing Logo to Airtable...`);
-                    await updateAirtableField(audit.airtable_record_id, 'Img_Logo', logoResult.url);
-                }
-            }
-
-            // STEP 3: SSL Labs
-            console.log(`[WORKER] [JOB ${job.id}] Executing Step: SSL Labs...`);
-            await updateStep('ssl_labs', 'EN_COURS');
-            const domain = new URL(siteUrl).hostname;
-            const sslResult = await auditSslLabs(domain, auditId);
-            await updateStep('ssl_labs', sslResult.statut, null, sslResult.capture);
-            if (audit.airtable_record_id && sslResult.capture) {
-                await updateAirtableField(audit.airtable_record_id, 'Img_SSL', sslResult.capture);
-            }
-
-            // STEP 4: Responsive Check
-            if (await checkCancellation()) return;
-            try {
-                console.log(`[WORKER] [JOB ${job.id}] Executing Step: Responsive Check...`);
-                await updateStep('ami_responsive', 'EN_COURS');
-                const respResult = await runWithTimeout(auditResponsive(siteUrl, auditId), 180000, 'Responsive'); // 3m
-                await updateStep('ami_responsive', respResult.statut, null, respResult.capture);
-                if (audit.airtable_record_id && respResult.capture) {
-                    await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture);
-                }
-            } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] Responsive Check failed:`, e.message);
-                await updateStep('ami_responsive', 'FAILED', e.message);
-            }
-
-            // STEP 5: PageSpeed Mobile
-            try {
-                console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Mobile...`);
-                await updateStep('psi_mobile', 'EN_COURS');
-                const psiMobile = await runWithTimeout(auditPageSpeedMobile(siteUrl, auditId), 180000, 'PSI Mobile'); // 3m
-                await updateStep('psi_mobile', psiMobile.statut, psiMobile.details, psiMobile.capture);
-                if (audit.airtable_record_id) {
-                    if (psiMobile.score) {
-                        const mobileScorePercent = psiMobile.score / 100;
-                        await updateAirtableField(audit.airtable_record_id, 'pourcentage smartphone', mobileScorePercent);
-                    }
-                    if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Mobile', psiMobile.capture);
-                }
-            } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] PSI Mobile failed:`, e.message);
-                await updateStep('psi_mobile', 'FAILED', e.message);
-            }
-
-            // STEP 6: PageSpeed Desktop
-            try {
-                console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Desktop...`);
-                await updateStep('psi_desktop', 'EN_COURS');
-                const psiDesktop = await runWithTimeout(auditPageSpeedDesktop(siteUrl, auditId), 180000, 'PSI Desktop'); // 3m
-                await updateStep('psi_desktop', psiDesktop.statut, psiDesktop.details, psiDesktop.capture);
-                if (audit.airtable_record_id) {
-                    if (psiDesktop.score) {
-                        const desktopScorePercent = psiDesktop.score / 100;
-                        await updateAirtableField(audit.airtable_record_id, 'pourcentage desktop', desktopScorePercent);
-                    }
-                    if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Desktop', psiDesktop.capture);
-                }
-            } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] PSI Desktop failed:`, e.message);
-                await updateStep('psi_desktop', 'FAILED', e.message);
-            }
-
             // ──────────────────────────────────────────────────────────────────
             // HELPER: Load encrypted cookies for a service
-            // ──────────────────────────────────────────────────────────────────
             // ──────────────────────────────────────────────────────────────────
             const getSessionCookies = async (service) => {
                 const sessionRow = await db.get(
@@ -250,78 +172,12 @@ export const initWorker = (io, db) => {
                 }
             };
 
-            let googleCookies = null; // Declare once for both Sheets and GSC
+            let googleCookies = null;
             const sheetAuditUrl = audit.sheet_audit_url;
             const sheetPlanUrl = audit.sheet_plan_url;
 
-            // STEP 7: Google Sheets Audit — API (HTML rendering)
-
-            if (!sheetAuditUrl) {
-                console.log(`[WORKER] [JOB ${job.id}] Missing Audit Sheet URL, skipping.`);
-                for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides', 'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn', 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title']) {
-                    await updateStep(k, 'SKIP', 'Lien Google Sheet Audit non fourni');
-                }
-            } else {
-                if (await checkCancellation()) return;
-                console.log(`[WORKER] [JOB ${job.id}] Starting Google Sheets API (Audit)...`);
-                const sheetStepsMap = {
-                    "Img_Poids_image": "sheet_images",
-                    "Img_balise_h1_absente": "sheet_h1_absente",
-                    "Img_que des H1 vides": "sheet_h1_vides",
-                    "Img_au moins une H1 vide": "sheet_h1_au_moins",
-                    "Img_1ère balise Hn n'est pas H1": "sheet_hn_pas_h1",
-                    "Img_Sauts de niveau entre les Hn": "sheet_sauts_hn",
-                    "Img_Hn trop longue": "sheet_hn_longue",
-                    "Img_longeur_page": "sheet_mots_body",
-                    "Img_meta_description": "sheet_meta_desc",
-                    "Img_balises_title": "sheet_balise_title",
-                    "Img_meme_title": "sheet_meme_title",
-                    "Img_meta_description_double": "sheet_meta_desc_double",
-                    "Img_balise_h1_double": "sheet_doublons_h1",
-                };
-
-                for (const stepKey of Object.values(sheetStepsMap)) {
-                    await updateStep(stepKey, 'EN_COURS');
-                }
-
-                const sheetResults = await auditGoogleSheetsAPI(sheetAuditUrl, null, auditId);
-
-                for (const [fieldId, res] of Object.entries(sheetResults)) {
-                    const stepKey = sheetStepsMap[fieldId];
-                    if (stepKey) {
-                        await updateStep(stepKey, res.statut, res.details, res.capture);
-                    }
-                    if (res.capture && res.statut === "SUCCESS" && audit.airtable_record_id) {
-                        try {
-                            await updateAirtableField(audit.airtable_record_id, fieldId, res.capture);
-                        } catch (e) {
-                            console.error(`[WORKER] Failed to update Airtable for ${fieldId}:`, e.message);
-                        }
-                    }
-                }
-            }
-
-            // STEP 8: 404 Check (moved up as requested)
-            if (await checkCancellation()) return;
-            try {
-                await updateStep('check_404', 'EN_COURS');
-                if (sheetAuditUrl) {
-                    console.log(`[WORKER] [JOB ${job.id}] Starting 404 check...`);
-                    const res404 = await check404(sheetAuditUrl, auditId);
-                    await updateStep('check_404', res404.statut, res404.details, res404.capture);
-                    if (audit.airtable_record_id) {
-                        if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);
-                        if (res404.lien404) await updateAirtableField(audit.airtable_record_id, 'lien_404', res404.lien404);
-                    }
-                } else {
-                    await updateStep('check_404', 'SKIP', 'Lien Google Sheet non fourni');
-                }
-            } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] 404 Step failed:`, e.message);
-                await updateStep('check_404', 'FAILED', e.message);
-            }
-
-            // STEP 9: Google Sheets Plan d'Action — Direct Playwright Capture
+            // STEP 2: Google Sheets Plan d'Action — Direct Playwright Capture
+            // Moved to Step 2 to satisfy user priority
             if (await checkCancellation()) return;
 
             const planStepsMap = {
@@ -368,6 +224,149 @@ export const initWorker = (io, db) => {
                         await updateStep(stepKey, 'FAILED', e.message);
                     }
                 }
+            }
+
+            // STEP 3: Logo Extraction
+            if (await checkCancellation()) return;
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: Logo Extraction...`);
+            await updateStep('logo', 'IA_EN_COURS');
+            const logoResult = await extractLogo(siteUrl, auditId);
+
+            await updateStep('logo', logoResult.statut, logoResult.details, logoResult.url);
+
+            // Sync Logo to Airtable
+            if (audit.airtable_record_id) {
+                if (logoResult.statut === 'SUCCESS' && logoResult.url) {
+                    console.log(`[WORKER] [JOB ${job.id}] Syncing Logo to Airtable...`);
+                    await updateAirtableField(audit.airtable_record_id, 'Img_Logo', logoResult.url);
+                }
+            }
+
+            // STEP 4: SSL Labs
+            console.log(`[WORKER] [JOB ${job.id}] Executing Step: SSL Labs...`);
+            await updateStep('ssl_labs', 'EN_COURS');
+            const domainSsl = new URL(siteUrl).hostname;
+            const sslResult = await auditSslLabs(domainSsl, auditId);
+            await updateStep('ssl_labs', sslResult.statut, null, sslResult.capture);
+            if (audit.airtable_record_id && sslResult.capture) {
+                await updateAirtableField(audit.airtable_record_id, 'Img_SSL', sslResult.capture);
+            }
+
+            // STEP 5: Responsive Check
+            if (await checkCancellation()) return;
+            try {
+                console.log(`[WORKER] [JOB ${job.id}] Executing Step: Responsive Check...`);
+                await updateStep('ami_responsive', 'EN_COURS');
+                const respResult = await runWithTimeout(auditResponsive(siteUrl, auditId), 180000, 'Responsive'); // 3m
+                await updateStep('ami_responsive', respResult.statut, null, respResult.capture);
+                if (audit.airtable_record_id && respResult.capture) {
+                    await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture);
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] Responsive Check failed:`, e.message);
+                await updateStep('ami_responsive', 'FAILED', e.message);
+            }
+
+            // STEP 6: PageSpeed Mobile
+            try {
+                console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Mobile...`);
+                await updateStep('psi_mobile', 'EN_COURS');
+                const psiMobile = await runWithTimeout(auditPageSpeedMobile(siteUrl, auditId), 180000, 'PSI Mobile'); // 3m
+                await updateStep('psi_mobile', psiMobile.statut, psiMobile.details, psiMobile.capture);
+                if (audit.airtable_record_id) {
+                    if (psiMobile.score) {
+                        const mobileScorePercent = psiMobile.score / 100;
+                        await updateAirtableField(audit.airtable_record_id, 'pourcentage smartphone', mobileScorePercent);
+                    }
+                    if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Mobile', psiMobile.capture);
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] PSI Mobile failed:`, e.message);
+                await updateStep('psi_mobile', 'FAILED', e.message);
+            }
+
+            // STEP 7: PageSpeed Desktop
+            try {
+                console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Desktop...`);
+                await updateStep('psi_desktop', 'EN_COURS');
+                const psiDesktop = await runWithTimeout(auditPageSpeedDesktop(siteUrl, auditId), 180000, 'PSI Desktop'); // 3m
+                await updateStep('psi_desktop', psiDesktop.statut, psiDesktop.details, psiDesktop.capture);
+                if (audit.airtable_record_id) {
+                    if (psiDesktop.score) {
+                        const desktopScorePercent = psiDesktop.score / 100;
+                        await updateAirtableField(audit.airtable_record_id, 'pourcentage desktop', desktopScorePercent);
+                    }
+                    if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Desktop', psiDesktop.capture);
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] PSI Desktop failed:`, e.message);
+                await updateStep('psi_desktop', 'FAILED', e.message);
+            }
+
+            // STEP 8: Google Sheets Audit — API (HTML rendering)
+            if (!sheetAuditUrl) {
+                console.log(`[WORKER] [JOB ${job.id}] Missing Audit Sheet URL, skipping.`);
+                for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides', 'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn', 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title']) {
+                    await updateStep(k, 'SKIP', 'Lien Google Sheet Audit non fourni');
+                }
+            } else {
+                if (await checkCancellation()) return;
+                console.log(`[WORKER] [JOB ${job.id}] Starting Google Sheets API (Audit)...`);
+                const sheetStepsMap = {
+                    "Img_Poids_image": "sheet_images",
+                    "Img_balise_h1_absente": "sheet_h1_absente",
+                    "Img_que des H1 vides": "sheet_h1_vides",
+                    "Img_au moins une H1 vide": "sheet_h1_au_moins",
+                    "Img_1ère balise Hn n'est pas H1": "sheet_hn_pas_h1",
+                    "Img_Sauts de niveau entre les Hn": "sheet_sauts_hn",
+                    "Img_Hn trop longue": "sheet_hn_longue",
+                    "Img_longeur_page": "sheet_mots_body",
+                    "Img_meta_description": "sheet_meta_desc",
+                    "Img_balises_title": "sheet_balise_title",
+                    "Img_meme_title": "sheet_meme_title",
+                    "Img_meta_description_double": "sheet_meta_desc_double",
+                    "Img_balise_h1_double": "sheet_doublons_h1",
+                };
+
+                for (const stepKey of Object.values(sheetStepsMap)) {
+                    await updateStep(stepKey, 'EN_COURS');
+                }
+
+                const sheetResults = await auditGoogleSheetsAPI(sheetAuditUrl, null, auditId);
+
+                for (const [fieldId, res] of Object.entries(sheetResults)) {
+                    const stepKey = sheetStepsMap[fieldId];
+                    if (stepKey) {
+                        await updateStep(stepKey, res.statut, res.details, res.capture);
+                    }
+                    if (res.capture && res.statut === "SUCCESS" && audit.airtable_record_id) {
+                        try {
+                            await updateAirtableField(audit.airtable_record_id, fieldId, res.capture);
+                        } catch (e) {
+                            console.error(`[WORKER] Failed to update Airtable for ${fieldId}:`, e.message);
+                        }
+                    }
+                }
+            }
+
+            // STEP 9: 404 Check
+            if (await checkCancellation()) return;
+            try {
+                await updateStep('check_404', 'EN_COURS');
+                if (sheetAuditUrl) {
+                    console.log(`[WORKER] [JOB ${job.id}] Starting 404 check...`);
+                    const res404 = await check404(sheetAuditUrl, auditId);
+                    await updateStep('check_404', res404.statut, res404.details, res404.capture);
+                    if (audit.airtable_record_id) {
+                        if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);
+                        if (res404.lien404) await updateAirtableField(audit.airtable_record_id, 'lien_404', res404.lien404);
+                    }
+                } else {
+                    await updateStep('check_404', 'SKIP', 'Lien Google Sheet non fourni');
+                }
+            } catch (e) {
+                console.error(`[WORKER] [JOB ${job.id}] 404 Step failed:`, e.message);
+                await updateStep('check_404', 'FAILED', e.message);
             }
 
             // STEP 9: Google Search Console
