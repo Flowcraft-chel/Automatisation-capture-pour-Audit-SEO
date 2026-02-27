@@ -72,12 +72,12 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
         }
 
         // Stratégie de scroll pour MRM Section 4
+        let tableEl = page.locator('table').first();
         try {
             console.log(`[MRM] Hunting for section 4 ("Profondeur")...`);
 
             // 1. Cibler le conteneur principal ou le titre
             const sectionHeader = page.locator('h2#profondeur').first();
-            const sectionSubTitle = page.locator('h3#s4\\.1, h3:has-text("4.1")').first();
 
             if (await sectionHeader.isVisible()) {
                 console.log(`[MRM] Found section by h2#profondeur.`);
@@ -86,22 +86,17 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
             }
 
             // 2. Trouver le tableau de données de la section 4.1 (Profondeur)
-            // On cherche le tableau qui suit immédiatement le titre de la section 4
-            const tableEl = page.locator('#profondeur, #s4\\.1').locator('xpath=following::table').first();
+            tableEl = page.locator('#profondeur, #s4\\.1').locator('xpath=following::table').first();
 
             if (await tableEl.isVisible()) {
                 console.log(`[MRM] Found depth table. Scrolling...`);
-                // On scroll pour que le tableau soit bien visible avec son titre au dessus
                 await tableEl.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-
-                // On remonte un peu pour voir le titre de la section si possible
                 await page.evaluate(() => window.scrollBy(0, -150));
-
                 console.log(`[MRM] ✅ Scrolled to Section 4 table.`);
             } else {
                 console.warn(`[MRM] Table not found with XPath, searching by class.`);
-                const tableByClass = page.locator('.tablecenter').first();
-                await tableByClass.scrollIntoViewIfNeeded();
+                tableEl = page.locator('.tablecenter').first();
+                await tableEl.scrollIntoViewIfNeeded();
             }
 
             await page.waitForTimeout(3000);
@@ -111,7 +106,13 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
         }
 
         const tmpPath = path.resolve(`temp_mrm_${uuidv4()}.png`);
-        await page.screenshot({ path: tmpPath, fullPage: false });
+
+        // Screenshot du TABLEAU uniquement (plus propre que la page entière)
+        if (await tableEl.isVisible()) {
+            await tableEl.screenshot({ path: tmpPath });
+        } else {
+            await page.screenshot({ path: tmpPath, fullPage: false });
+        }
 
         const prompt = `Cette image montre un tableau de données My Ranking Metrics sur la profondeur des pages.
 Rogne pour ne garder que le tableau, sans aucun menu ni chrome de l'application.
