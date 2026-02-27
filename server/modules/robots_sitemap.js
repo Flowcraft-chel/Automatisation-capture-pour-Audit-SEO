@@ -196,7 +196,8 @@ export async function auditRobotsSitemap(url, auditId) {
                             .replace(/(\w+)(=)/g, '<span style="color:#7ee787;">$1</span>$2');
 
                         const bg = idx % 2 === 0 ? '#0d1117' : '#161b22';
-                        return `<div style="padding:2px 16px;white-space:nowrap;background:${bg};border-left:2px solid #30363d;line-height:1.6;">${html}</div>`;
+                        // Add overflow hidden and text-overflow ellipsis to prevent single long lines from creating a 65535px wide image
+                        return `<div style="padding:2px 16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:${bg};border-left:2px solid #30363d;line-height:1.6;">${html}</div>`;
                     }).join('');
 
                     const sitemapHtml = `<!doctype html>
@@ -206,7 +207,7 @@ export async function auditRobotsSitemap(url, auditId) {
 body{background:#0d1117;color:#c9d1d9;font-family:'Fira Code', 'Courier New', monospace;}
 </style></head>
 <body>
-<div id="sitemap-capture-container" style="display:inline-block;min-width:600px;font-size:14px;border:1px solid #30363d;padding:12px 0;background:#0d1117;">
+<div id="sitemap-capture-container" style="display:inline-block;width:100%;max-width:1200px;overflow:hidden;font-size:14px;border:1px solid #30363d;padding:12px 0;background:#0d1117;">
 ${htmlLines}
 </div>
 </body></html>`;
