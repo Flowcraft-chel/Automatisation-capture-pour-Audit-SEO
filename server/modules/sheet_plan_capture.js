@@ -186,26 +186,49 @@ async function captureAndUpload(page, promptText, cloudinaryFolder) {
 
 // ── Main entry point ────────────────────────────────────────────────────────
 export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
+    console.log(`[PLAN-CAPTURE] Starting Plan d'Action capture for URL: ${sheetPlanUrl}`);
     const results = {};
-    const { browser, page } = await openSheet(sheetPlanUrl, googleCookies);
+    let browser, page;
+
     try {
+        const session = await openSheet(sheetPlanUrl, googleCookies);
+        browser = session.browser;
+        page = session.page;
+
         for (const tab of PLAN_TABS) {
-            console.log(`[PLAN-CAPTURE] Processing: ${tab.tabName}`);
-            const found = await navigateToTab(page, tab.tabName);
-            if (!found) {
-                results[tab.airtableField] = { statut: 'SKIP', details: 'Onglet introuvable' };
-                continue;
+            try {
+                console.log(`[PLAN-CAPTURE] 🎯 Processing tab: "${tab.tabName}"`);
+                const found = await navigateToTab(page, tab.tabName);
+                if (!found) {
+                    console.warn(`[PLAN-CAPTURE] ⚠️ Tab "${tab.tabName}" not found. skipping.`);
+                    results[tab.airtableField] = { statut: 'SKIP', details: 'Onglet introuvable' };
+                    continue;
+                }
+
+                console.log(`[PLAN-CAPTURE] 📸 Capturing content for: ${tab.tabName}`);
+                const url = await captureAndUpload(page,
+                    `${SHEET_CROP_PROMPT}\nRogne pour ne garder que le tableau. Supprime tous les menus.`,
+                    `audit-results/${tab.cloudinarySlug}-${auditId}`
+                );
+
+                results[tab.airtableField] = { statut: 'SUCCESS', capture: url };
+                console.log(`[PLAN-CAPTURE] ✅ Successfully captured and uploaded: ${tab.tabName}`);
+            } catch (tabErr) {
+                console.error(`[PLAN-CAPTURE] ❌ Error processing tab "${tab.tabName}": ${tabErr.message}`);
+                results[tab.airtableField] = { statut: 'ERROR', details: tabErr.message };
             }
-            const url = await captureAndUpload(page,
-                `${SHEET_CROP_PROMPT}\nRogne pour ne garder que le tableau. Supprime tous les menus.`,
-                `audit-results/${tab.cloudinarySlug}-${auditId}`
-            );
-            results[tab.airtableField] = { statut: 'SUCCESS', capture: url };
         }
     } catch (e) {
-        console.error(`[PLAN-CAPTURE] Critical error: ${e.message}`);
+        console.error(`[PLAN-CAPTURE] 💥 Critical error opening sheet: ${e.message}`);
+        // Mark all as error if we can't even open the sheet
+        for (const tab of PLAN_TABS) {
+            results[tab.airtableField] = { statut: 'ERROR', details: e.message };
+        }
     } finally {
-        await browser.close();
+        if (browser) {
+            console.log(`[PLAN-CAPTURE] Closing browser.`);
+            await browser.close();
+        }
     }
     return results;
 }

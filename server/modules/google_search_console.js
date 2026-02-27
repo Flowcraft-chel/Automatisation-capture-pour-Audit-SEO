@@ -50,16 +50,43 @@ async function launchWithCookies(cookies) {
     return { browser, context, page };
 }
 
+/**
+ * ── HELPER: Resolve Property ID ──────────────────────────────────────────────
+ * Detects if the property is URL-prefix (https://domain/) or Domain (sc-domain:domain).
+ */
+async function resolvePropertyId(page, domain) {
+    const propertyCandidates = [
+        `https://${domain}/`,
+        `sc-domain:${domain}`,
+        `http://${domain}/`
+    ];
+
+    console.log(`[GSC] 🔍 Detecting property ID for: ${domain}`);
+    for (const cand of propertyCandidates) {
+        const url = `https://search.google.com/search-console/sitemaps?resource_id=${encodeURIComponent(cand)}`;
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+        const noAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
+        if (noAccess === 0) {
+            console.log(`[GSC] ✅ Found valid property ID: ${cand}`);
+            return cand;
+        }
+    }
+    console.warn(`[GSC] ⚠️ No accessible property found for candidates: ${propertyCandidates.join(', ')}`);
+    return propertyCandidates[0]; // Fallback to first
+}
+
 // ── GOOGLE SEARCH CONSOLE — SITEMAPS ────────────────────────────────────────
 export async function captureGscSitemaps(siteUrl, auditId, googleCookies) {
     const result = { statut: 'ERROR', capture: null };
     const { browser, page } = await launchWithCookies(googleCookies);
     try {
         const domain = new URL(siteUrl).hostname;
+        const propertyId = await resolvePropertyId(page, domain);
+
         // Navigate to GSC sitemaps tab
-        const gscUrl = `https://search.google.com/search-console/sitemaps?resource_id=https%3A%2F%2F${encodeURIComponent(domain)}%2F`;
+        const gscUrl = `https://search.google.com/search-console/sitemaps?resource_id=${encodeURIComponent(propertyId)}`;
         console.log(`[GSC] Navigating to Sitemaps: ${gscUrl}`);
-        console.log(`[GSC] Cookies injected: ${googleCookies.length} cookies`);
         await page.goto(gscUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
         // Check we're logged in
@@ -112,7 +139,9 @@ export async function captureGscHttps(siteUrl, auditId, googleCookies) {
     const { browser, page } = await launchWithCookies(googleCookies);
     try {
         const domain = new URL(siteUrl).hostname;
-        const gscUrl = `https://search.google.com/search-console/security-issues?resource_id=https%3A%2F%2F${encodeURIComponent(domain)}%2F`;
+        const propertyId = await resolvePropertyId(page, domain);
+
+        const gscUrl = `https://search.google.com/search-console/security-issues?resource_id=${encodeURIComponent(propertyId)}`;
         console.log(`[GSC] Navigating to HTTPS: ${gscUrl}`);
         await page.goto(gscUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
@@ -160,8 +189,10 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
     const { browser, page } = await launchWithCookies(googleCookies);
     try {
         const domain = new URL(siteUrl).hostname;
+        const propertyId = await resolvePropertyId(page, domain);
+
         // GSC Performance page
-        const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=https%3A%2F%2F${encodeURIComponent(domain)}%2F`;
+        const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}`;
         console.log(`[GSC] Navigating to Performance: ${gscUrl}`);
         await page.goto(gscUrl, { waitUntil: 'networkidle', timeout: 60000 });
 
@@ -246,7 +277,9 @@ export async function captureGscCoverage(siteUrl, auditId, googleCookies) {
     const { browser, page } = await launchWithCookies(googleCookies);
     try {
         const domain = new URL(siteUrl).hostname;
-        const gscUrl = `https://search.google.com/search-console/index?resource_id=https%3A%2F%2F${encodeURIComponent(domain)}%2F`;
+        const propertyId = await resolvePropertyId(page, domain);
+
+        const gscUrl = `https://search.google.com/search-console/index?resource_id=${encodeURIComponent(propertyId)}`;
         console.log(`[GSC] Navigating to Coverage (Index): ${gscUrl}`);
         await page.goto(gscUrl, { waitUntil: 'networkidle', timeout: 60000 });
 
@@ -313,8 +346,10 @@ export async function captureGscTopPages(siteUrl, auditId, googleCookies) {
     const { browser, page } = await launchWithCookies(googleCookies);
     try {
         const domain = new URL(siteUrl).hostname;
+        const propertyId = await resolvePropertyId(page, domain);
+
         // Performance page sorted by pages tab
-        const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=https%3A%2F%2F${encodeURIComponent(domain)}%2F&breakdown=page`;
+        const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}&breakdown=page`;
         console.log(`[GSC] Navigating to Top Pages: ${gscUrl}`);
         await page.goto(gscUrl, { waitUntil: 'networkidle', timeout: 60000 });
 

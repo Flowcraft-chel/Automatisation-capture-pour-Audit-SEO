@@ -187,11 +187,11 @@ async function syncAirtableToDb(io, db) {
                 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides',
                 'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn',
                 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc',
-                'sheet_balise_title',
+                'sheet_balise_title', 'check_404',
                 'plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur',
-                'gsc_sitemaps', 'gsc_https',
+                'gsc_sitemaps', 'gsc_https', 'gsc_performance', 'gsc_coverage', 'gsc_top_pages',
                 'mrm_profondeur', 'ubersuggest_da',
-                'semrush_authority', 'ahrefs_authority'
+                'semrush_authority', 'ahrefs_authority', 'majestic_backlinks'
             ];
 
             for (const stepKey of stepsKeys) {
