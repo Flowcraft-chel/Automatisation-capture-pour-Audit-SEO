@@ -159,6 +159,9 @@ async function syncAirtableToDb(io, db) {
             const auditId = uuidv4();
             console.log(`[POLLER] Importing new audit from Airtable: ${siteName} (${airtableId})`);
 
+            // If Airtable says it's already done, mark it as TERMINE locally
+            const initialLocalStatus = airtableStatus === 'fait' ? 'TERMINE' : 'EN_ATTENTE';
+
             // 1. Create Local Audit
             await db.run(
                 'INSERT INTO audits (id, user_id, nom_site, url_site, sheet_audit_url, sheet_plan_url, mrm_report_url, airtable_record_id, statut_global) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -171,7 +174,7 @@ async function syncAirtableToDb(io, db) {
                     record.get('Lien Google Sheet plan d\'action'),
                     record.get('Lien du rapport my ranking metrics'),
                     airtableId,
-                    'EN_ATTENTE'
+                    initialLocalStatus
                 ]
             );
 
@@ -194,12 +197,14 @@ async function syncAirtableToDb(io, db) {
             for (const stepKey of stepsKeys) {
                 await db.run(
                     'INSERT INTO audit_steps (id, audit_id, step_key, statut) VALUES (?, ?, ?, ?)',
-                    [uuidv4(), auditId, stepKey, 'EN_ATTENTE']
+                    [uuidv4(), auditId, stepKey, initialLocalStatus === 'TERMINE' ? 'SUCCESS' : 'EN_ATTENTE']
                 );
             }
 
-            // 4. Add to BullMQ
-            await auditQueue.add(`audit-${auditId}`, { auditId, userId: defaultUser.id });
+            // 4. Add to BullMQ only if not already finished
+            if (initialLocalStatus === 'EN_ATTENTE') {
+                await auditQueue.add(`audit-${auditId}`, { auditId, userId: defaultUser.id });
+            }
 
             // 5. Notify Frontend
             io.emit('audit:created', {
@@ -207,7 +212,7 @@ async function syncAirtableToDb(io, db) {
                 user_id: defaultUser.id,
                 nom_site: siteName,
                 url_site: siteUrl,
-                statut_global: 'EN_ATTENTE',
+                statut_global: initialLocalStatus,
                 created_at: new Date().toISOString()
             });
         }

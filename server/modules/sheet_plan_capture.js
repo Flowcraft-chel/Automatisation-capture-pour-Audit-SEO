@@ -1,8 +1,7 @@
 /**
  * sheet_plan_capture.js
- * Captures Plan d'Action Google Sheets tabs directly via Playwright.
- * Uses Google OAuth cookies (from user session) to authenticate.
- * Takes screenshots of the visible content for each tab.
+ * Optimized Plan d'Action Google Sheets tabs capture.
+ * Uses robust navigation and UI hiding logic provided by the user.
  */
 import { chromium } from 'playwright';
 import sharp from 'sharp';
@@ -12,27 +11,49 @@ import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 import { analyzeImage } from '../utils/openai.js';
 
-// ── Plan d'action tabs to capture ──────────────────────────────────────────────
+// ── CSS to hide Google Sheets UI chrome ──────────────────────────────────────
+const SHEETS_HIDE_CSS = `
+  .grid-bottom-bar, .docs-sheet-tab-bar, #docs-header,
+  #docs-chrome, .docs-titlebar-badges, .waffle-chip-container,
+  #docs-menubar, .docs-butterbar-container, .docs-offline-indicator,
+  .docs-gm3-topbar, .notranslate[role="banner"] { display: none !important; }
+`;
+
+const SHEET_CROP_PROMPT = `Tu es un expert en rognage d'images.
+Cette image est une capture d'écran d'un Google Sheet.
+Tu DOIS rogner pour ne garder STRICTEMENT que le tableau de données visibles.
+
+RÈGLES STRICTES :
+1. Supprime TOUT en haut : barre de menus, barre d'outils, barre de formule, en-tête du document
+2. Supprime TOUT en bas : barre d'onglets, barre de défilement, pied de page
+3. Supprime TOUTES les marges vides à droite et en bas du tableau
+4. Supprime les colonnes de lettres (A, B, C...) et les numéros de lignes (1, 2, 3...)
+5. Le résultat doit être un tableau SERRÉ sans aucun espace vide autour
+6. NE COUPE AUCUNE donnée du tableau. Tu DOIS ABSOLUMENT CONSERVER la première ligne d'en-tête contenant les noms des colonnes (ex: URL, Destination, H1...). Ne la rogne surtout pas.
+
+Réponds UNIQUEMENT avec : CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
+
+// ── Plan d'action tabs mapping ────────────────────────────────────────────────
 const PLAN_TABS = [
     {
         airtableField: "Img_planD'action",
-        gid: null,  // Will be resolved dynamically
         tabName: "Synthèse Audit - Plan d'action",
+        cloudinarySlug: "plan-synthese"
     },
     {
         airtableField: "Img_Requetes_cles",
-        gid: null,
         tabName: "Requêtes Clés / Calédito",
+        cloudinarySlug: "plan-requetes"
     },
     {
         airtableField: "Img_donnee image",
-        gid: null,
         tabName: "Données Images",
+        cloudinarySlug: "plan-donnee-img"
     },
     {
         airtableField: "Img_longeur_page_plan",
-        gid: null,
         tabName: "Longueur de page",
+        cloudinarySlug: "plan-longueur"
     },
 ];
 
@@ -59,200 +80,132 @@ async function cropWithAI(imagePath, prompt) {
     }
 }
 
-/**
- * Capture all Plan d'Action tabs from Google Sheets.
- * @param {string} sheetPlanUrl - URL of the Plan d'Action Google Sheet
- * @param {string} auditId - Unique audit identifier
- * @param {Array} googleCookies - Google session cookies for authentication
- * @returns {Object} Results keyed by Airtable field name
- */
-export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
-    const results = {};
+// ── Navigate to a sheet and select a specific tab by name ────────────────────
+async function navigateToTab(page, tabName) {
+    console.log(`[PLAN-CAPTURE] Navigating to tab: "${tabName}"`);
+    await page.evaluate(() => {
+        const tabBar = document.querySelector('.docs-sheet-tab-bar') || document.querySelector('.grid-bottom-bar');
+        if (tabBar) tabBar.style.display = 'block';
+    });
+    await page.waitForTimeout(2000);
 
-    if (!sheetPlanUrl) {
-        for (const tab of PLAN_TABS) {
-            results[tab.airtableField] = { statut: 'SKIP', details: 'Lien Google Sheet plan d\'action non fourni' };
+    const result = await page.evaluate((name) => {
+        const tabSelectors = [
+            '.docs-sheet-tab-name',
+            '.docs-sheet-tab .docs-sheet-tab-caption',
+            '[data-tab-name]',
+            '.docs-sheet-tab span'
+        ];
+        let tabs = [];
+        for (const sel of tabSelectors) {
+            tabs = Array.from(document.querySelectorAll(sel));
+            if (tabs.length > 0) break;
         }
-        return results;
+        if (tabs.length === 0) return { found: false, noTabs: true };
+        const target = tabs.find(t => t.innerText.trim().toLowerCase().includes(name.toLowerCase()));
+        if (!target) return { found: false, available: tabs.map(t => t.innerText.trim()) };
+        const parent = target.closest('.docs-sheet-tab');
+        const isActive = parent && parent.classList.contains('docs-sheet-active-tab');
+        let gid = null;
+        if (parent && parent.id && parent.id.startsWith('sheet-button-')) gid = parent.id.replace('sheet-button-', '');
+        if (!gid && parent) {
+            const dataId = parent.getAttribute('data-id');
+            if (dataId) gid = dataId;
+        }
+        return { found: true, gid, isActive, name: target.innerText.trim() };
+    }, tabName);
+
+    if (!result.found) {
+        await page.evaluate(() => { const b = document.querySelector('.grid-bottom-bar'); if (b) b.style.display = 'none'; });
+        return false;
     }
 
+    if (!result.isActive && result.gid) {
+        const url = new URL(page.url());
+        url.hash = `gid=${result.gid}`;
+        await page.goto(url.toString(), { waitUntil: 'networkidle', timeout: 60000 });
+        await page.addStyleTag({ content: SHEETS_HIDE_CSS });
+    } else if (!result.isActive) {
+        await page.evaluate((name) => {
+            const tabSelectors = ['.docs-sheet-tab-name', '.docs-sheet-tab span'];
+            for (const sel of tabSelectors) {
+                const tabs = Array.from(document.querySelectorAll(sel));
+                const target = tabs.find(t => t.innerText.trim().toLowerCase().includes(name.toLowerCase()));
+                if (target) {
+                    const parent = target.closest('.docs-sheet-tab') || target;
+                    parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                    parent.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                    parent.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                    return true;
+                }
+            }
+            return false;
+        }, tabName);
+        await page.waitForTimeout(4000);
+    }
+    await page.evaluate(() => { const b = document.querySelector('.grid-bottom-bar'); if (b) b.style.display = 'none'; });
+    await page.waitForTimeout(2000);
+    return true;
+}
+
+// ── Open a Google Sheet with injected Google cookies ─────────────────────────
+async function openSheet(sheetUrl, googleCookies) {
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
     });
-
     const context = await browser.newContext({
-        viewport: { width: 1600, height: 1000 },
+        viewport: { width: 1600, height: 900 },
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         locale: 'fr-FR'
     });
-
-    if (!googleCookies || !googleCookies.length) {
-        console.warn('[PLAN-CAPTURE] No Google cookies provided. Attempting public view...');
-    } else {
-        await context.addCookies(googleCookies);
-    }
-
+    if (googleCookies && googleCookies.length) await context.addCookies(googleCookies);
     const page = await context.newPage();
-    page.setDefaultTimeout(60000);
-
+    page.setDefaultTimeout(90000);
+    await page.goto(sheetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     try {
-        // Navigate to the sheet first to get tab GIDs
-        console.log(`[PLAN-CAPTURE] Opening sheet: ${sheetPlanUrl}`);
-        await page.goto(sheetPlanUrl, { waitUntil: 'networkidle', timeout: 60000 });
-        await page.waitForTimeout(10000); // Wait more for heavy sheets
+        await page.waitForSelector('#waffle-grid-container', { state: 'visible', timeout: 20000 });
+    } catch {
+        await page.waitForSelector('body', { state: 'visible', timeout: 5000 });
+    }
+    await page.addStyleTag({ content: SHEETS_HIDE_CSS });
+    return { browser, context, page };
+}
 
-        // Check if we're redirected to login (informative only if no cookies)
-        if (page.url().includes('accounts.google.com') || page.url().includes('signin')) {
-            console.warn('[PLAN-CAPTURE] Redirected to login. This sheet might not be public.');
-            if (!googleCookies || !googleCookies.length) {
-                for (const tab of PLAN_TABS) {
-                    results[tab.airtableField] = { statut: 'SKIP', details: 'Session Google requise pour ce document' };
-                }
-                return results;
-            }
-        }
+// ── Screenshot and upload ───────────────────────────────────────────────────
+async function captureAndUpload(page, promptText, cloudinaryFolder) {
+    const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+    const tmpPath = path.join(tmpDir, `temp_plan_${uuidv4()}.png`);
+    await page.screenshot({ path: tmpPath, fullPage: false });
+    const croppedPath = await cropWithAI(tmpPath, promptText);
+    const result = await uploadToCloudinary(croppedPath, cloudinaryFolder);
+    if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
+    if (fs.existsSync(tmpPath) && tmpPath !== croppedPath) fs.unlinkSync(tmpPath);
+    return result?.secure_url || result?.url || result;
+}
 
-        // Dismiss any cookie/notification banners
-        try {
-            for (const sel of ['#L2AGLb', "button:has-text('Tout accepter')", "button:has-text('Accept all')"]) {
-                const btn = await page.$(sel);
-                if (btn) { await btn.click(); await page.waitForTimeout(1000); break; }
-            }
-        } catch { }
-
-        // Extract tab names and their GIDs from the sheet tabs bar
-        const tabInfo = await page.evaluate(() => {
-            const tabs = {};
-            // Google Sheets tab buttons are in the sheet tab bar
-            document.querySelectorAll('.docs-sheet-tab').forEach(tab => {
-                const name = tab.querySelector('.docs-sheet-tab-name')?.textContent?.trim();
-                const input = tab.querySelector('input[name="gid"]');
-                const href = tab.querySelector('a')?.getAttribute('href');
-                if (name) {
-                    // Try to get GID from various sources
-                    let gid = input?.value;
-                    if (!gid && href) {
-                        const match = href.match(/gid=(\d+)/);
-                        if (match) gid = match[1];
-                    }
-                    if (!gid) {
-                        const id = tab.getAttribute('id');
-                        if (id) {
-                            const match = id.match(/(\d+)/);
-                            if (match) gid = match[1];
-                        }
-                    }
-                    tabs[name] = gid || '0';
-                }
-            });
-            return tabs;
-        });
-
-        console.log(`[PLAN-CAPTURE] Found tabs:`, JSON.stringify(tabInfo));
-
-        // Base URL for the sheet (without any gid)
-        const baseUrl = sheetPlanUrl.split('#')[0].split('?')[0];
-
+// ── Main entry point ────────────────────────────────────────────────────────
+export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
+    const results = {};
+    const { browser, page } = await openSheet(sheetPlanUrl, googleCookies);
+    try {
         for (const tab of PLAN_TABS) {
-            console.log(`[PLAN-CAPTURE] Processing tab: "${tab.tabName}"`);
-
-            try {
-                // Find the matching tab name (fuzzy match)
-                let matchedTab = null;
-                let matchedGid = null;
-
-                for (const [name, gid] of Object.entries(tabInfo)) {
-                    if (name.toLowerCase().includes(tab.tabName.toLowerCase().substring(0, 10)) ||
-                        tab.tabName.toLowerCase().includes(name.toLowerCase().substring(0, 10))) {
-                        matchedTab = name;
-                        matchedGid = gid;
-                        break;
-                    }
-                }
-
-                if (!matchedTab) {
-                    // Try clicking on the tab directly
-                    try {
-                        const tabEl = page.locator(`.docs-sheet-tab-name:has-text("${tab.tabName.substring(0, 15)}")`).first();
-                        if (await tabEl.count() > 0) {
-                            await tabEl.click();
-                            await page.waitForTimeout(3000);
-                            matchedTab = tab.tabName;
-                        }
-                    } catch { }
-                }
-
-                if (!matchedTab && !matchedGid) {
-                    results[tab.airtableField] = { statut: 'SKIP', details: `Onglet "${tab.tabName}" non trouvé` };
-                    console.log(`[PLAN-CAPTURE] Tab "${tab.tabName}" not found, skipping`);
-                    continue;
-                }
-
-                // Navigate to the specific tab
-                if (matchedGid) {
-                    const tabUrl = `${baseUrl}#gid=${matchedGid}`;
-                    console.log(`[PLAN-CAPTURE] Navigating to: ${tabUrl}`);
-                    await page.goto(tabUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                }
-
-                await page.waitForTimeout(4000);
-
-                // Hide Google Sheets UI elements for a cleaner capture
-                await page.evaluate(() => {
-                    // Hide toolbar, formula bar, status bar, etc.
-                    const hide = [
-                        '#docs-menubars', '#docs-toolbar', '#formula-bar-ctrls',
-                        '.docs-additions-ctrls', '#docs-branding', '#docs-notice',
-                        '#secondary-actions', '#docs-titlebar-container',
-                        '.waffle-status-bar', '#footer', '.docs-explore-ctrls',
-                        '.docs-sheet-tab-bar'
-                    ];
-                    hide.forEach(sel => {
-                        document.querySelectorAll(sel).forEach(el => el.style.display = 'none');
-                    });
-                });
-
-                await page.waitForTimeout(1000);
-
-                // Take screenshot
-                const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
-                const tmpPath = path.join(tmpDir, `temp_plan_${tab.airtableField.replace(/[^a-zA-Z0-9]/g, '_')}_${uuidv4()}.png`);
-                await page.screenshot({ path: tmpPath, fullPage: false });
-
-                // AI crop to keep only the data table
-                const prompt = `Cette image montre une feuille Google Sheets avec un tableau de données.
-Rogne pour ne garder que le tableau et ses données, sans les menus, barres d'outils, ou marges blanches.
-Le résultat doit être utilisable directement dans une slide PowerPoint.
-CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
-
-                const croppedPath = await cropWithAI(tmpPath, prompt);
-                const uploaded = await uploadToCloudinary(croppedPath, `audit-results/plan-${auditId}`);
-                if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
-                if (fs.existsSync(tmpPath) && tmpPath !== croppedPath) fs.unlinkSync(tmpPath);
-
-                results[tab.airtableField] = {
-                    statut: 'SUCCESS',
-                    capture: uploaded?.secure_url || uploaded?.url || uploaded
-                };
-                console.log(`[PLAN-CAPTURE] ✅ ${tab.airtableField} captured`);
-
-            } catch (e) {
-                console.error(`[PLAN-CAPTURE] Error on "${tab.tabName}":`, e.message);
-                results[tab.airtableField] = { statut: 'FAILED', details: e.message };
+            console.log(`[PLAN-CAPTURE] Processing: ${tab.tabName}`);
+            const found = await navigateToTab(page, tab.tabName);
+            if (!found) {
+                results[tab.airtableField] = { statut: 'SKIP', details: 'Onglet introuvable' };
+                continue;
             }
+            const url = await captureAndUpload(page,
+                `${SHEET_CROP_PROMPT}\nRogne pour ne garder que le tableau. Supprime tous les menus.`,
+                `audit-results/${tab.cloudinarySlug}-${auditId}`
+            );
+            results[tab.airtableField] = { statut: 'SUCCESS', capture: url };
         }
-
     } catch (e) {
-        console.error('[PLAN-CAPTURE] Global error:', e.message);
-        for (const tab of PLAN_TABS) {
-            if (!results[tab.airtableField]) {
-                results[tab.airtableField] = { statut: 'FAILED', details: e.message };
-            }
-        }
+        console.error(`[PLAN-CAPTURE] Critical error: ${e.message}`);
     } finally {
         await browser.close();
     }
-
     return results;
 }
