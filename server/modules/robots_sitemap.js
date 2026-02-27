@@ -70,25 +70,23 @@ export async function auditRobotsSitemap(url, auditId) {
                 return { hasSitemap: sitemaps.length > 0, lines: sitemaps, firstUrl };
             });
 
-            // 2. Rendu DOM avec lignes de contexte autour du sitemap
+            // 2. Rendu DOM avec lignes de contexte autour du sitemap (Dark Mode)
             await page.evaluate((info) => {
                 if (!document.body) return;
                 const text = document.body.textContent || "";
                 const lines = text.split('\n');
 
                 document.body.innerHTML = '';
-                document.body.style.cssText = 'background: white !important; margin: 0; padding: 0 !important;';
+                document.body.style.cssText = 'background: #0d1117 !important; margin: 0; padding: 0 !important;';
 
                 const container = document.createElement('div');
                 container.id = 'robots-capture-container';
-                container.style.cssText = 'display: inline-block; font-family: "Google Sans", Arial, sans-serif; font-size: 13px; line-height: 1.6; border: 1px solid #dadce0; background: #fff;';
+                container.style.cssText = 'display: inline-block; font-family: "Fira Code", monospace; font-size: 13px; line-height: 1.6; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9;';
 
                 if (info.hasSitemap) {
-                    // Collect indices of sitemap lines
                     const sitemapIndices = new Set();
                     info.lines.forEach(obj => sitemapIndices.add(obj.index));
 
-                    // Build context: 2 lines before and 2 lines after each sitemap line
                     const showIndices = new Set();
                     for (const idx of sitemapIndices) {
                         for (let i = Math.max(0, idx - 2); i <= Math.min(lines.length - 1, idx + 2); i++) {
@@ -100,41 +98,31 @@ export async function auditRobotsSitemap(url, auditId) {
                     let lastIdx = -2;
 
                     sortedIndices.forEach(idx => {
-                        // Add separator if there's a gap
                         if (idx > lastIdx + 1 && lastIdx >= 0) {
                             const sep = document.createElement('div');
                             sep.textContent = '  ···';
-                            sep.style.cssText = 'color: #9aa0a6; font-style: italic; padding: 2px 12px; background: #f8f9fa; border-top: 1px solid #e8eaed; border-bottom: 1px solid #e8eaed;';
+                            sep.style.cssText = 'color: #8b949e; font-style: italic; padding: 2px 12px; background: #161b22; border-top: 1px solid #30363d; border-bottom: 1px solid #30363d;';
                             container.appendChild(sep);
                         }
 
                         const div = document.createElement('div');
                         div.textContent = lines[idx] || ' ';
                         if (sitemapIndices.has(idx)) {
-                            // Sitemap line — highlighted
-                            div.style.cssText = 'background: #e8f0fe !important; border-left: 4px solid #1a73e8 !important; padding: 4px 12px !important; font-weight: 600; color: #1a73e8 !important; font-family: "Roboto Mono", monospace; font-size: 13px;';
+                            div.style.cssText = 'background: #1f2937 !important; border-left: 4px solid #58a6ff !important; padding: 4px 12px !important; font-weight: 600; color: #58a6ff !important;';
                         } else {
-                            // Context line
-                            div.style.cssText = 'padding: 2px 12px; color: #3c4043; font-family: "Roboto Mono", monospace; font-size: 13px;';
+                            div.style.cssText = 'padding: 2px 12px; color: #c9d1d9;';
                         }
                         container.appendChild(div);
                         lastIdx = idx;
                     });
                 } else {
-                    // Affichage complet (max 40 lignes)
                     lines.slice(0, 40).forEach((line, idx) => {
                         const div = document.createElement('div');
                         div.textContent = line || ' ';
-                        div.style.cssText = 'padding: 2px 12px; color: #3c4043; font-family: "Roboto Mono", monospace; font-size: 13px;' +
-                            (idx % 2 === 0 ? 'background: #fff;' : 'background: #f8f9fa;');
+                        div.style.cssText = 'padding: 2px 12px; color: #c9d1d9;' +
+                            (idx % 2 === 0 ? 'background: #0d1117;' : 'background: #161b22;');
                         container.appendChild(div);
                     });
-                    if (lines.length > 40) {
-                        const trunc = document.createElement('div');
-                        trunc.textContent = `... (${lines.length - 40} lignes supplémentaires)`;
-                        trunc.style.cssText = 'color: #9aa0a6; font-style: italic; padding: 4px 12px;';
-                        container.appendChild(trunc);
-                    }
                 }
 
                 document.body.appendChild(container);
@@ -195,26 +183,30 @@ export async function auditRobotsSitemap(url, auditId) {
                     robotsResult.sitemap.capture = null;
                     console.log('[MODULE-ROBOTS] Sitemap content is empty');
                 } else {
-                    // Build styled HTML with XML syntax highlighting
+                    // Build styled HTML with XML syntax highlighting (Dark Mode / GitHub Style)
                     const htmlLines = lines.map((line, idx) => {
                         let html = line
                             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                            // XML tags → purple
-                            .replace(/(&lt;\/?[\w:-]+)/g, '<span style="color:#8250df;font-weight:600;">$1</span>')
-                            .replace(/(&gt;)/g, '<span style="color:#8250df;">$1</span>')
-                            // URLs → blue
-                            .replace(/(https?:\/\/[^\s<&]+)/g, '<span style="color:#1a73e8;">$1</span>')
-                            // XML attributes → green
-                            .replace(/(\w+)(=)/g, '<span style="color:#1e8e3e;">$1</span>$2');
+                            // XML tags → soft purple (#bc8cff)
+                            .replace(/(&lt;\/?[\w:-]+)/g, '<span style="color:#bc8cff;font-weight:600;">$1</span>')
+                            .replace(/(&gt;)/g, '<span style="color:#bc8cff;">$1</span>')
+                            // URLs → bright blue (#58a6ff)
+                            .replace(/(https?:\/\/[^\s<&]+)/g, '<span style="color:#58a6ff;text-decoration:underline;">$1</span>')
+                            // XML attributes → light green (#7ee787)
+                            .replace(/(\w+)(=)/g, '<span style="color:#7ee787;">$1</span>$2');
 
-                        const bg = idx % 2 === 0 ? '#fff' : '#f8f9fa';
-                        return `<div style="padding:1px 16px;white-space:nowrap;background:${bg};">${html}</div>`;
+                        const bg = idx % 2 === 0 ? '#0d1117' : '#161b22';
+                        return `<div style="padding:2px 16px;white-space:nowrap;background:${bg};border-left:2px solid #30363d;line-height:1.6;">${html}</div>`;
                     }).join('');
 
                     const sitemapHtml = `<!doctype html>
-<html><head><meta charset="utf-8"/><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#fff;}</style></head>
+<html><head><meta charset="utf-8"/><style>
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#0d1117;color:#c9d1d9;font-family:'Fira Code', 'Courier New', monospace;}
+</style></head>
 <body>
-<div id="sitemap-capture-container" style="display:inline-block;font-family:'Roboto Mono',monospace;font-size:13px;line-height:1.7;border:1px solid #dadce0;background:#fff;padding:8px 0;">
+<div id="sitemap-capture-container" style="display:inline-block;min-width:600px;font-size:14px;border:1px solid #30363d;padding:12px 0;background:#0d1117;">
 ${htmlLines}
 </div>
 </body></html>`;

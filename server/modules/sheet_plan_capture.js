@@ -76,13 +76,6 @@ export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
         return results;
     }
 
-    if (!googleCookies || !googleCookies.length) {
-        for (const tab of PLAN_TABS) {
-            results[tab.airtableField] = { statut: 'SKIP', details: 'Session Google non connectée' };
-        }
-        return results;
-    }
-
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
@@ -94,23 +87,30 @@ export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
         locale: 'fr-FR'
     });
 
-    await context.addCookies(googleCookies);
+    if (!googleCookies || !googleCookies.length) {
+        console.warn('[PLAN-CAPTURE] No Google cookies provided. Attempting public view...');
+    } else {
+        await context.addCookies(googleCookies);
+    }
+
     const page = await context.newPage();
     page.setDefaultTimeout(60000);
 
     try {
         // Navigate to the sheet first to get tab GIDs
         console.log(`[PLAN-CAPTURE] Opening sheet: ${sheetPlanUrl}`);
-        await page.goto(sheetPlanUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForTimeout(5000);
+        await page.goto(sheetPlanUrl, { waitUntil: 'networkidle', timeout: 60000 });
+        await page.waitForTimeout(10000); // Wait more for heavy sheets
 
-        // Check if we're redirected to login
+        // Check if we're redirected to login (informative only if no cookies)
         if (page.url().includes('accounts.google.com') || page.url().includes('signin')) {
-            console.warn('[PLAN-CAPTURE] Session Google expirée.');
-            for (const tab of PLAN_TABS) {
-                results[tab.airtableField] = { statut: 'SKIP', details: 'Session Google expirée' };
+            console.warn('[PLAN-CAPTURE] Redirected to login. This sheet might not be public.');
+            if (!googleCookies || !googleCookies.length) {
+                for (const tab of PLAN_TABS) {
+                    results[tab.airtableField] = { statut: 'SKIP', details: 'Session Google requise pour ce document' };
+                }
+                return results;
             }
-            return results;
         }
 
         // Dismiss any cookie/notification banners
