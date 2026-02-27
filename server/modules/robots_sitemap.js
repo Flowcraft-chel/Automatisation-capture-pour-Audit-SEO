@@ -234,17 +234,9 @@ ${htmlLines}
                 robotsResult.sitemap.statut = 'ERROR';
             }
         } else {
-            console.log("[MODULE-ROBOTS] Sitemap NON DÉTECTÉ.");
-            await page.setContent(`
-                <body style="background: white; color: #d73a49; font-family: sans-serif; padding: 60px; text-align: center; border: 15px solid #f6f8fa;">
-                    <h1 style="font-size: 36px; margin-bottom: 20px;">⚠️ Sitemap non détecté</h1>
-                    <p style="font-size: 18px; color: #586069;">Le fichier sitemap n'est pas déclaré dans robots.txt et aucun fallback n'a fonctionné.</p>
-                </body>
-            `);
-            const errBuffer = await page.screenshot({ fullPage: false });
-            const errUrl = await uploadBufferToCloudinary(errBuffer, `sitemap-notfound-${auditId}.png`, 'audit-captures');
-            robotsResult.sitemap.capture = errUrl;
-            robotsResult.sitemap.statut = 'WARNING';
+            console.log("[MODULE-ROBOTS] Sitemap NON DÉTECTÉ. Aucune capture générée.");
+            robotsResult.sitemap.capture = null;
+            robotsResult.sitemap.statut = 'SKIP';
         }
 
     } catch (err) {
