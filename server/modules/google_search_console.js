@@ -5,6 +5,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 import { analyzeImage } from '../utils/openai.js';
+import { sanitizeCookies } from '../utils/cookies.js';
 
 // ── AI crop helper ────────────────────────────────────────────────────────────
 async function cropWithAI(imagePath, prompt) {
@@ -40,7 +41,10 @@ async function launchWithCookies(cookies) {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         locale: 'fr-FR'
     });
-    if (cookies && cookies.length) await context.addCookies(cookies);
+    if (cookies && cookies.length) {
+        const cleanCookies = sanitizeCookies(cookies);
+        await context.addCookies(cleanCookies);
+    }
     const page = await context.newPage();
     page.setDefaultTimeout(90000);
     return { browser, context, page };
@@ -69,6 +73,16 @@ export async function captureGscSitemaps(siteUrl, auditId, googleCookies) {
         }
 
         await page.waitForTimeout(6000);
+
+        // Check for "No access" property screen
+        const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
+        if (missingAccess > 0) {
+            const accountEmail = await page.locator('[aria-label*="@gmail.com"], [class*="profile"] text').first().innerText().catch(() => 'inconnu');
+            result.statut = 'SKIP';
+            result.details = `Accès GSC refusé : Le compte Google (${accountEmail.trim()}) n'a pas accès à la propriété ${domain}.`;
+            console.error(`[GSC] ❌ Access denied for property ${domain} (Account: ${accountEmail})`);
+            return result;
+        }
 
         const tmpPath = path.resolve(`temp_gsc_sitemap_${uuidv4()}.png`);
         await page.screenshot({ path: tmpPath, fullPage: false });
@@ -110,6 +124,14 @@ export async function captureGscHttps(siteUrl, auditId, googleCookies) {
 
         await page.waitForTimeout(4000);
 
+        // Check for "No access" property screen
+        const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
+        if (missingAccess > 0) {
+            result.statut = 'SKIP';
+            result.details = `Accès refusé : Le compte Google utilisé n'a pas accès à la propriété ${domain} dans Search Console.`;
+            return result;
+        }
+
         const tmpPath = path.resolve(`temp_gsc_https_${uuidv4()}.png`);
         await page.screenshot({ path: tmpPath, fullPage: false });
 
@@ -149,6 +171,14 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
             return result;
         }
         await page.waitForTimeout(5000);
+
+        // Check for "No access" property screen
+        const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
+        if (missingAccess > 0) {
+            result.statut = 'SKIP';
+            result.details = `Accès refusé : Le compte Google utilisé n'a pas accès à la propriété ${domain} dans Search Console.`;
+            return result;
+        }
 
         // Try to extract total clicks from the page
         const metrics = await page.evaluate(() => {
@@ -227,6 +257,14 @@ export async function captureGscCoverage(siteUrl, auditId, googleCookies) {
         }
         await page.waitForTimeout(5000);
 
+        // Check for "No access" property screen
+        const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
+        if (missingAccess > 0) {
+            result.statut = 'SKIP';
+            result.details = `Accès refusé : Le compte Google utilisé n'a pas accès à la propriété ${domain} dans Search Console.`;
+            return result;
+        }
+
         // Try to extract indexed pages count
         const indexed = await page.evaluate(() => {
             const elements = document.querySelectorAll('[class*="metric"], [class*="count"], span, div');
@@ -286,6 +324,14 @@ export async function captureGscTopPages(siteUrl, auditId, googleCookies) {
             return result;
         }
         await page.waitForTimeout(5000);
+
+        // Check for "No access" property screen
+        const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
+        if (missingAccess > 0) {
+            result.statut = 'SKIP';
+            result.details = `Accès refusé : Le compte Google utilisé n'a pas accès à la propriété ${domain} dans Search Console.`;
+            return result;
+        }
 
         // Click on "Pages" tab if visible
         try {

@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 import { analyzeImage } from '../utils/openai.js';
 import { decrypt } from '../utils/encrypt.js';
+import { sanitizeCookies } from '../utils/cookies.js';
 
 // ── AI crop helper ────────────────────────────────────────────────────────────
 async function cropWithAI(imagePath, prompt) {
@@ -49,7 +50,8 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         locale: 'fr-FR'
     });
-    await context.addCookies(cookies);
+    const cleanCookies = sanitizeCookies(cookies);
+    await context.addCookies(cleanCookies);
     const page = await context.newPage();
     page.setDefaultTimeout(90000);
 
@@ -69,15 +71,20 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
             return result;
         }
 
-        // Trouver "Profondeur des pages et maillage interne"
-        const targetText = 'Profondeur des pages et maillage interne';
+        // Trouver "4. Profondeur de clics et maillage"
+        const targetText = '4. Profondeur de clics et maillage';
         try {
-            const link = page.locator(`text="${targetText}"`).first();
-            await link.waitFor({ state: 'visible', timeout: 15000 });
-            await link.scrollIntoViewIfNeeded();
+            console.log(`[MRM] Hunting for section starting with "4" and containing "Profondeur"...`);
+            const target = page.locator('h1, h2, h3, h4, h5, h6, div, p, span')
+                .filter({ hasText: /4\..*Profondeur/i })
+                .first();
+            await target.waitFor({ state: 'visible', timeout: 20000 });
+            await target.scrollIntoViewIfNeeded();
+            console.log(`[MRM] ✅ Found and scrolled to: "${await target.innerText()}"`);
             await page.waitForTimeout(1000);
         } catch {
-            // Essayer de trouver la section avec "Profondeur des pages"
+            // Fallback plus souple
+            console.log(`[MRM] ⚠️ Target text "${targetText}" not found, trying fallback "Profondeur des pages"...`);
             try {
                 await page.locator('text=Profondeur des pages').first().scrollIntoViewIfNeeded();
             } catch {
