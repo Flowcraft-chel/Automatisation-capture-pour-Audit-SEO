@@ -1,7 +1,7 @@
 # 🔍 Smart Audit SEO — Architecture & Automation
 ![Banner placeholder](https://via.placeholder.com/1200x300.png?text=Smart+Audit+SEO)
 
-**Smart Audit SEO** is a high-performance, fully automated SEO auditing robot built for scale. It autonomously visits client websites, captures critical SEO metrics, intelligently crops data using AI Vision, and syncs everything directly into Airtable — ready for downstream reporting via N8N or Google Slides.
+**Smart Audit SEO** is a high-performance, fully automated SEO auditing robot built for scale. It autonomously visits client websites, captures critical SEO metrics, intelligently crops data using AI Vision, and syncs everything directly into Airtable.
 
 ---
 
@@ -29,7 +29,6 @@ graph TD
     E --> F[OpenAI: AI Vision Cropping]
     F --> G[Cloudinary: Asset Upload]
     G --> H[Airtable: Update Record]
-    H --> I[N8N: Generate Final Slides]
     
     J[React Frontend] <-->|REST API & WebSockets| B
 ```
