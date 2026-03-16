@@ -7,7 +7,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        novek: {
+        brand: {
           blue: '#1e40af',
           dark: '#0f172a',
           light: '#f8fafc',

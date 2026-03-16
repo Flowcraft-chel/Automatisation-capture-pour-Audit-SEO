@@ -145,7 +145,7 @@ const Layout = ({ user, onLogout }) => {
 
                         <div className="flex items-center gap-3 pl-2 lg:pl-6 border-l border-white/5">
                             <div className="text-right hidden sm:block">
-                                <p className="text-sm font-semibold whitespace-nowrap">Admin Novek</p>
+                                <p className="text-sm font-semibold whitespace-nowrap">Admin Flowcraft</p>
                                 <p className="text-[10px] text-slate-500 uppercase tracking-tighter">Administrateur</p>
                             </div>
                             <div className="w-9 h-9 lg:w-10 lg:h-10 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center border-2 border-slate-800 shadow-xl overflow-hidden shrink-0">

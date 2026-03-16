@@ -21,7 +21,7 @@ export async function auditSslLabs(domain, auditId) {
         console.log(`[MODULE-SSL] Checking v4 info for ${domain}...`);
         try {
             await axios.get('https://api.ssllabs.com/api/v4/info', {
-                headers: { email: 'contact@novekai.agency' }
+                headers: { email: 'audit@flowcraft.dev' }
             });
         } catch (infoErr) {
             console.warn(`[MODULE-SSL] api/v4/info warning: ${infoErr.message}`);
@@ -39,7 +39,7 @@ export async function auditSslLabs(domain, auditId) {
 
             try {
                 const response = await axios.get(`https://api.ssllabs.com/api/v4/analyze?host=${domain}&all=done`, {
-                    headers: { email: 'contact@novekai.agency' }
+                    headers: { email: 'audit@flowcraft.dev' }
                 });
                 data = response.data;
 

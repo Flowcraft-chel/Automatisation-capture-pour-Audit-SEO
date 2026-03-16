@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  --novek-blue: #1e40af;
+  --brand-blue: #1e40af;
 }
 
 body {

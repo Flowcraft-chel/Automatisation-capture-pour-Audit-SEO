@@ -1,210 +1,108 @@
-# 🔍 Smart Audit — Robot d'Audit SEO Automatisé
+# 🔍 Smart Audit SEO — Architecture & Automation
+![Banner placeholder](https://via.placeholder.com/1200x300.png?text=Smart+Audit+SEO)
 
-**Smart Audit** est un robot qui automatise la génération de rapports d'audit SEO. Il capture, filtre, rogne et envoie automatiquement les données dans Airtable — prêtes à être exploitées par le workflow N8N pour produire le rapport final (Google Slides).
+**Smart Audit SEO** is a high-performance, fully automated SEO auditing robot built for scale. It autonomously visits client websites, captures critical SEO metrics, intelligently crops data using AI Vision, and syncs everything directly into Airtable — ready for downstream reporting via N8N or Google Slides.
 
 ---
 
-## 🏗️ Architecture
+## 🌟 Highlights & Features
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                    FRONTEND (React)                       │
-│  Inscription / Connexion / Dashboard / Suivi en temps réel│
-└────────────────────┬─────────────────────────────────────┘
-                     │ WebSocket + REST API
-┌────────────────────▼─────────────────────────────────────┐
-│                  BACKEND (Express.js)                     │
-│   • API REST (auth, audits, sessions)                    │
-│   • BullMQ Worker (30 étapes d'audit)                    │
-│   • Airtable Poller (sync bidirectionnel)                │
-└────────────────────┬─────────────────────────────────────┘
-                     │
-   ┌─────────────────┼──────────────────┐
-   ▼                 ▼                  ▼
-┌────────┐   ┌────────────┐   ┌──────────────┐
-│ Redis  │   │ Cloudinary │   │  Airtable    │
-│(BullMQ)│   │ (images)   │   │ (résultats)  │
-└────────┘   └────────────┘   └──────────────┘
-```
+This project demonstrates advanced expertise in Node.js backend orchestration, dynamic browser automation, and modern React frontend design.
 
-## 📦 Stack Technique
+- **30-Step Autonomous Audit**: Orchestrates a massive multi-step pipeline covering `robots.txt`, XML Sitemaps, SSL, PageSpeed Insights, Mobile Responsiveness, and competitive SEO tools (Ahrefs, Semrush, Majestic, Ubersuggest).
+- **Intelligent Google Workspace Interaction**: Programmatically authenticates and drives Google Search Console (GSC) and Google Sheets to extract, crop, and save data tables directly.
+- **AI-Powered Image Cropping**: Integrates **OpenAI GPT-4o Vision** to intelligently bounds-crop browser screenshots down to the exact data tables needed for the final report.
+- **Robust Job Queuing**: Utilizes **BullMQ** (Redis) to reliably orchestrate parallel audits with automatic retries, timeouts, and asynchronous completion status.
+- **Real-Time Client Updates**: Uses **Socket.io** to provide immediate, granular feedback to the React dashboard on active audit progression.
+- **Automated Two-Way Sync**: Interfaces seamlessly with **Airtable** through a dedicated poller, dynamically pulling waiting tasks and continuously updating records with extracted data and Cloudinary image URLs.
 
-| Composant | Technologie |
-|---|---|
-| Frontend | React 19 + Vite + TailwindCSS |
-| Backend | Express.js (ESM) |
-| File d'attente | BullMQ + Redis |
-| Base de données | SQLite (locale) |
-| Navigateur | Playwright (captures écran) |
-| IA (rognage) | OpenAI GPT-4o Vision |
-| Stockage images | Cloudinary |
-| Destination | Airtable |
+---
 
-## 🔄 Les 30 Étapes de l'Audit
-
-Le robot exécute automatiquement les étapes suivantes pour chaque site :
-
-### Modules sans authentification
-| # | Module | Champ Airtable | Description |
-|---|---|---|---|
-| 1 | **Robots.txt** | `Img_Robots_Txt` | Capture le fichier robots.txt avec focus sur la ligne Sitemap |
-| 2 | **Sitemap** | `Img_Sitemap` | Capture le fichier sitemap.xml |
-| 3 | **Logo** | `Img_Logo` | Extrait le logo via Google Favicon / Clearbit |
-| 4 | **Am I Responsive** | `Img_AmIResponsive` | Capture le rendu multi-écrans du site |
-| 5 | **SSL Labs** | `Img_SSL` | Note SSL (A, A+, B…) via l'API SSL Labs v4 |
-| 6 | **PSI Mobile** | `Img_PSI_Mobile` + `pourcentage smartphone` | Score et capture PageSpeed Mobile |
-| 7 | **PSI Desktop** | `Img_PSI_Desktop` + `pourcentage desktop` | Score et capture PageSpeed Desktop |
-
-### Google Sheets — Audit (8 onglets)
-| # | Onglet | Champ Airtable | Filtre / Tri appliqué |
-|---|---|---|---|
-| 8 | Images | `Img_Poids_image` | Taille ≥ 100 Ko, décroissant, 2 colonnes |
-| 9 | Même title | `Img_meme_title` | Capture simple, rognée |
-| 10 | Même balise meta desc | `Img_meta_description_double` | Capture simple, rognée |
-| 11 | Doublons H1 | `Img_balise_h1_double` | Capture simple, rognée |
-| 12-17 | Balises H1-H6 | 6 sous-champs `Img_*` | Filtre oui/non + tri, 2 colonnes par capture |
-| 18 | Nb mots body | `Img_longeur_page` | Top 10 gravité décroissant |
-| 19 | Meta desc | `Img_meta_description` | Caractères = 0 uniquement |
-| 20 | Balise title | `Img_balises_title` | Filtre "trop longue" |
-
-### Google Sheets — Plan d'action (4 onglets)
-| # | Onglet | Champ Airtable |
-|---|---|---|
-| 21 | Synthèse Audit | `Img_planD'action` |
-| 22 | Requêtes Clés | `Img_Requetes_cles` |
-| 23 | Données Images | `Img_donnee image` |
-| 24 | Longueur de page | `Img_longeur_page` |
-
-### Modules avec authentification
-| # | Module | Champ Airtable |
-|---|---|---|
-| 25-26 | Google Search Console | `Img_sitemap_declaré` + `Img_https` |
-| 27 | My Ranking Metrics | `Img_profondeur_clics` |
-| 28 | Ubersuggest | `Img_autorité_domaine_UBERSUGGEST` |
-| 29 | Semrush | `Img_autorité_domaine_SEMRUSH` |
-| 30 | Ahrefs | `Img_autorité_domaine_AHREF` |
-
-## ⚙️ Variables d'Environnement
-
-Créez un fichier `.env` à la racine :
-
-```env
-# Serveur
-PORT=3000
-JWT_SECRET=votre_secret_jwt
-ENCRYPT_KEY=cle_hex_32_octets_pour_aes256
-
-# Redis (requis pour BullMQ)
-REDIS_URL=redis://localhost:6379
-
-# Cloudinary (stockage des captures)
-CLOUDINARY_CLOUD_NAME=votre_cloud_name
-CLOUDINARY_API_KEY=votre_api_key
-CLOUDINARY_API_SECRET=votre_api_secret
-
-# OpenAI (rognage IA des captures)
-OPENAI_API_KEY=sk-votre_cle_openai
-
-# Airtable (destination des résultats)
-AIRTABLE_API_KEY=pat_votre_token
-AIRTABLE_BASE_ID=appXXXXXXXXXX
-AIRTABLE_TABLE_ID=tblXXXXXXXXXX
-```
-
-## 🚀 Déploiement sur Railway
-
-### Prérequis Railway
-1. **Créer un projet** sur [railway.app](https://railway.app)
-2. **Ajouter un service Redis** (plugin gratuit)
-3. **Connecter le dépôt Git** du projet
-
-### Variables d'environnement Railway
-Toutes les variables ci-dessus + la variable `REDIS_URL` fournie automatiquement par le plugin Redis.
-
-### Commandes
-Le `Dockerfile` gère automatiquement :
-- Installation des dépendances Node.js
-- Installation de Playwright + navigateur Chromium
-- Build du frontend React
-- Démarrage du serveur Express
-
-## 🧪 Développement Local
-
-```bash
-# Installer les dépendances
-npm install
-
-# Installer Playwright
-npx playwright install chromium
-
-# Lancer en développement (frontend + backend)
-npm run dev
-
-# Build production
-npm run build
-
-# Lancer en production
-npm start
-```
-
-> ⚠️ **Redis requis** : Le backend nécessite une instance Redis pour BullMQ. Utilisez Docker (`docker run -p 6379:6379 redis`) ou [Memurai](https://www.memurai.com/) sur Windows.
-
-## 📁 Structure du Projet
-
-```
-server/
-├── index.js              # Point d'entrée Express
-├── airtable.js           # Helpers Airtable (sync champs)
-├── airtablePoller.js     # Polling Airtable → créer audits
-├── db.js                 # Base SQLite (utilisateurs, sessions)
-├── jobs/
-│   └── worker.js         # BullMQ Worker (orchestration des 30 étapes)
-├── modules/
-│   ├── robots_sitemap.js # Robots.txt + Sitemap
-│   ├── logo_extraction.js# Extraction du logo
-│   ├── responsive.js     # Am I Responsive
-│   ├── ssl_labs.js       # SSL Labs (API v4)
-│   ├── pagespeed.js      # PageSpeed Insights (Mobile + Desktop)
-│   ├── google_sheets.js  # 12 captures Google Sheets (filtres + tris)
-│   ├── google_search_console.js  # GSC (Sitemaps + HTTPS)
-│   ├── mrm.js           # My Ranking Metrics
-│   ├── ubersuggest.js   # Ubersuggest
-│   └── authority_checkers.js  # Semrush + Ahrefs
-└── utils/
-    ├── cloudinary.js     # Upload Cloudinary
-    ├── openai.js         # GPT-4o Vision (rognage IA)
-    └── encrypt.js        # Chiffrement AES-256 des sessions
-
-src/                      # Frontend React
-├── App.jsx
-├── pages/
-│   ├── Login.jsx
-│   ├── Dashboard.jsx
-│   └── Settings.jsx
-└── index.css
-```
-
-## 🔐 Sécurité
-
-- Les sessions utilisateur (cookies Google, MRM, Ubersuggest) sont **chiffrées en AES-256** avant stockage
-- L'authentification utilise **JWT** avec expiration
-- Les mots de passe sont hashés avec **bcrypt**
-- Le `.env` et les sessions sont exclus du dépôt Git
-
-## 📋 Workflow Complet
+## 🏗️ System Architecture
 
 ```mermaid
 graph TD
-    A[Airtable: Statut = 'A faire'] -->|Poller 20s| B[Créer audit en BDD]
-    B --> C[BullMQ Job]
-    C --> D[Worker: 30 étapes]
-    D --> E[Playwright: Capture écran]
-    E --> F[OpenAI: Rognage IA]
-    F --> G[Cloudinary: Upload image]
-    G --> H[Airtable: Mise à jour champ]
-    H --> I[N8N: Génération rapport Slides]
+    A[Airtable: Status 'À faire'] -->|Poller 20s| B[Create Audit in SQLite]
+    B --> C[BullMQ Job Queue]
+    C --> D[Worker: 30 Audit Steps]
+    D --> E[Playwright: Headless Browser Captures]
+    E --> F[OpenAI: AI Vision Cropping]
+    F --> G[Cloudinary: Asset Upload]
+    G --> H[Airtable: Update Record]
+    H --> I[N8N: Generate Final Slides]
+    
+    J[React Frontend] <-->|REST API & WebSockets| B
+```
+
+## 📦 Technical Stack
+
+| Category | Technology |
+|---|---|
+| **Frontend** | React 19, Vite, TailwindCSS, Lucide Icons |
+| **Backend** | Node.js (Express), ESM Modules |
+| **Task Queue** | BullMQ, IORedis |
+| **Database** | SQLite3 (Persistent Local File) |
+| **Automation** | Playwright (Chromium) |
+| **AI Vision** | OpenAI GPT-4o Vision API |
+| **Image Processing** | Sharp, Cloudinary |
+| **Integrations** | Airtable API, SSL Labs API v4, Google APIs |
+
+## 🚀 Key Technical Challenges Solved
+
+### Programmatic Authentication & Session Resumption
+Bypassing modern CAPTCHAs and session expiration for tools like Google Search Console and My Ranking Metrics requires sophisticated handling of cookies. The backend allows encrypted cookie injection (AES-256) through the database, spinning up Playwright instances pre-authenticated without triggering anti-bot protections.
+
+### Smart DOM Manipulation & UI Stripping
+Google Sheets capture steps required hiding the native Google UI chrome (toolbars, menu items, tabs) directly via injected CSS before taking Playwright screenshots, ensuring only raw data is captured.
+
+### AI-Driven Responsive Cropping
+Hardcoding pixel sizes for screenshots fails across different devices and dynamic data lengths. Instead, the screen captures are piped to `gpt-4o`, which acts as an expert coordinate estimator. It identifies where the target table begins and ends, returning strict `x, y, width, height` commands executed by the `sharp` image library.
+
+## ⚙️ Environment Configuration
+
+To run the platform locally, create a `.env` file containing:
+
+```env
+# Server
+PORT=3000
+JWT_SECRET=your_jwt_secret
+ENCRYPT_KEY=your_aes256_32bytes_key
+
+# Redis (required for BullMQ)
+REDIS_URL=redis://localhost:6379
+
+# Cloudinary
+CLOUDINARY_CLOUD_NAME=name
+CLOUDINARY_API_KEY=key
+CLOUDINARY_API_SECRET=secret
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+
+# Airtable
+AIRTABLE_API_KEY=pat...
+AIRTABLE_BASE_ID=app...
+AIRTABLE_TABLE_ID=tbl...
+```
+
+## 💻 Local Quickstart
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Install Playwright browsers
+npx playwright install chromium
+
+# 3. Start Redis (Requirement)
+docker run -d -p 6379:6379 redis
+
+# 4. Start concurrent dev servers (Frontend & Backend)
+npm run dev
+
+# 5. Build for production equivalent
+npm run build && npm start
 ```
 
 ---
-
-**Développé par [NOVEK](https://novek.fr)** — Automatisation intelligente pour les agences SEO.
+*Created and maintained by [Flowcraft-chel](https://github.com/Flowcraft-chel).*
