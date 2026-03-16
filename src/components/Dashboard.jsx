@@ -52,10 +52,10 @@ const Layout = ({ user, onLogout }) => {
                 <div className="p-6 flex items-center justify-between">
                     {(isSidebarOpen || !isSidebarOpen) && (
                         <div className={`flex items-center gap-3 ${!isSidebarOpen && 'lg:hidden'}`}>
-                            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                                <span className="font-bold text-white">S</span>
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+                                <img src="/logo.png" alt="FlowCraft" className="w-full h-full object-contain" />
                             </div>
-                            <span className="font-bold text-xl tracking-tight leading-none">Smart Audit</span>
+                            <span className="font-bold text-xl tracking-tight leading-none">FlowCraft</span>
                         </div>
                     )}
                     <button

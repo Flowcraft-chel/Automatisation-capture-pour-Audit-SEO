@@ -1,7 +1,7 @@
-# 🔍 Smart Audit SEO — Architecture & Automation
-![Banner placeholder](https://via.placeholder.com/1200x300.png?text=Smart+Audit+SEO)
+# 🔍 FlowCraft SEO — Architecture & Automation
+![Banner placeholder](https://via.placeholder.com/1200x300.png?text=FlowCraft+SEO)
 
-**Smart Audit SEO** is a high-performance, fully automated SEO auditing robot built for scale. It autonomously visits client websites, captures critical SEO metrics, intelligently crops data using AI Vision, and syncs everything directly into Airtable.
+**FlowCraft SEO** is a high-performance, fully automated SEO auditing robot built for scale. It autonomously visits client websites, captures critical SEO metrics, intelligently crops data using AI Vision, and syncs everything directly into Airtable.
 
 ---
 
